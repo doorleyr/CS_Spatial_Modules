@@ -1,0 +1,4 @@
+*.log
+*checkpoint.ipynb
+*.pyc
+*_dev.ipynb
