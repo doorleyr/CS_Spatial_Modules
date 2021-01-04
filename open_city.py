@@ -175,7 +175,8 @@ class US_State():
             
     def lodes_to_pop_table(self):
         od_subset=self.od
-        od_subset=od_subset.loc[od_subset['h_geoid'].isin(self.geoid_include)]
+        od_subset=od_subset.loc[((od_subset['h_geoid'].isin(self.geoid_include))&
+                                 (od_subset['w_geoid'].isin(self.geoid_include)))]
 
         print('Using {} of {} rows in OD data'.format(len(od_subset), len(self.od)))
         # convert counts by attribute to probabilities for each attribute
@@ -306,14 +307,19 @@ class Zones():
         
     
 class Simulation():
-    def __init__(self, sim_pop, mobsys, zones, sample_N=None):
-        self.check_zones(sim_pop, zones)
-        if sample_N is not None:
-            sim_pop=sim_pop.sample(n=sample_N)
-        self.sim_pop=sim_pop
+    def __init__(self, sim_pop, mobsys, zones, sample_N=None, sim_geoids=None):
+        self.check_zones(sim_pop, zones)           
+        sim_pop=sim_pop.reset_index(drop=True)
         self.mobsys=mobsys
         self.zones=zones
-#        self.get_close_node_table()
+        if sim_geoids is not None:
+            sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(sim_geoids))|
+                          (sim_pop['work_geoid'].isin(sim_geoids)))]
+        if sample_N is not None:
+            if len(sim_pop)>sample_N:
+                sim_pop=sim_pop.sample(n=sample_N)
+        self.sim_pop=sim_pop
+        self.get_close_node_table()
         
     def check_zones(self, sim_pop, zones):
         all_zones_sim_pop=set(list(sim_pop['home_geoid'])+list(sim_pop['work_geoid']))
@@ -372,8 +378,16 @@ class Simulation():
         self.sim_pop=self.sim_pop.apply(lambda row: self.scheduler(row), axis=1)
         self.sim_pop=self.sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
         
-            
-    
+    def create_trip_table(self):
+        """
+        For every person who passes through the simulation area:
+            add all their trips to a trip table
+        For every trip:
+            find route
+            add a deckgl path
+        
+        """
+        
     
 
         
