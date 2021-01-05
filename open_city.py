@@ -219,6 +219,7 @@ class MobilitySystem():
         assert all(modes[m].target_network_id in networks.keys() for m in modes), "A network ID doesn't exist"
         self.modes = modes
         self.networks = networks
+        self.build_link_attribute_lookup()
         
     def update_modes(self,modes):
         """
@@ -240,36 +241,87 @@ class MobilitySystem():
         networks should be a dictionary where keys are network ids and values 
         are pandana network objects
         """
-        self.modes.update(networks)
+        self.networks.update(networks)
+        self.build_link_attribute_lookup()
         
     def remove_network(self, network_id):
         del self.networks[network_id]
+        del self.attr_lookups[network_id]
         
     def get_network_by_id(self, network_id):
         return self.networks[network_id]
-    
-    def get_one_route(self, mode_id, node_a, node_b, include_coordinates=False):
+
+    def build_link_attribute_lookup(self):
+        print("building link attribute lookup")
+        self.attr_lookups={}
+        for network_id in self.networks:
+            edges_df=self.networks[network_id].edges_df.copy()
+            if self.networks[network_id]._twoway:
+                temp=edges_df.set_index(['to', 'from'], drop=False)
+                temp['from']=list(edges_df['to'].values)
+                temp['to']=list(edges_df['from'].values)
+                edges_df=edges_df.append(temp)
+        		# eliminate duplicates, keeping the lowest of each weight metric
+        		# in general other attributes are the same for each duplicate
+        		# note that for other attributes which differ across links with the same a and b nodes (like link type)
+        		# this approach may give incorrect results.
+            weight_metrics= self.networks[network_id].impedance_names
+            agg_dict={weight: 'min' for weight in weight_metrics}
+            for col in edges_df.columns:
+                if col not in weight_metrics:
+                    agg_dict.update({col: lambda x: x.iloc[0]})
+            edges_df=edges_df.groupby(edges_df.index).agg(agg_dict)
+            # add node coordinates
+            edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='from').rename(
+		        columns={'x': 'a_node_x', 'y': 'a_node_y'})
+            edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='to').rename(
+		        columns={'x': 'b_node_x', 'y': 'b_node_y'})
+            self.attr_lookups[network_id]=edges_df.to_dict(orient='index')
+
+    def get_one_route(self, mode_id, node_a, node_b, include_attributes=False):
         target_network_id=self.modes[mode_id].target_network_id
         weight_metric=self.modes[mode_id].weight_metric
         node_path= self.networks[target_network_id].shortest_path(
                 node_a, node_b, imp_name=weight_metric)
-        output={'node_path': node_path}
-        if include_coordinates:
-            output['coordinates']=self.networks[target_network_id].nodes_df.loc[
-                    node_path, ['x', 'y']].values
-        return output       
+        if include_attributes==True:
+            attributes=self.get_path_link_attributes(node_path, target_network_id)
+            return {'node_path': node_path, 'attributes': attributes}
+        return node_path       
     
-    def get_many_routes(self, mode_id, nodes_a, nodes_b, include_coordinates=False):
+    def get_many_routes(self, mode_id, nodes_a, nodes_b, include_attributes=False):
         target_network_id=self.modes[mode_id].target_network_id
         weight_metric=self.modes[mode_id].weight_metric
         node_paths= self.networks[target_network_id].shortest_paths(
                 nodes_a, nodes_b, imp_name=weight_metric)
-        output={'node_paths': node_paths}
-        if include_coordinates:
-            output['coordinates']=[self.networks[target_network_id].nodes_df.loc[
-                    np, ['x', 'y']].values for np in node_paths]
-        return output 
+        if include_attributes==True:
+            attributes=[self.get_path_link_attributes(np, target_network_id) for np in node_paths]
+            return {'node_path': node_paths, 'attributes': attributes}
+        return node_paths 
     # TODO: add function to download OSM networks
+    
+    def get_path_link_attributes(self, path, network_id, attribute_names=None):
+        # TODO: call from the get_routes functions (if asked for)
+        if len(path)>1:
+            if attribute_names==None:
+                attribute_names=self.networks[network_id].impedance_names
+            output={attr: [] for attr in attribute_names}
+            coordinates=[]
+            for node_ind in range(len(path)-1):
+                from_node=path[node_ind]
+                to_node=path[node_ind+1]
+                this_link_attrs=self.attr_lookups[network_id][(from_node, to_node)]
+                for attr in attribute_names:
+                    output[attr].append(this_link_attrs[attr])
+                coordinates+=[[this_link_attrs['a_node_x'], this_link_attrs['a_node_y']]]
+            coordinates+=[[this_link_attrs['b_node_x'], this_link_attrs['b_node_y']]]
+            output['coordinates']=coordinates
+            return output
+        else:
+            return None
+            
+            
+        
+        
 
 class Mode():
     def __init__(self, mode_dict):
