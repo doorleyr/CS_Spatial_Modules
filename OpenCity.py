@@ -15,12 +15,7 @@ import math
 import urllib.request as ur
 from gzip import GzipFile
 import random
-#
-#def add_centroid_xy_to_gdf(row):
-#    centroid=row['geometry'].centroid
-#    row['x_centroid']=centroid.x
-#    row['y_centroid']=centroid.y
-#    return row
+from shapely.geometry import Point, LineString
 
 def get_haversine_distance(point_1, point_2):
     """
@@ -37,7 +32,14 @@ def get_haversine_distance(point_1, point_2):
     r = 6371000 # Radius of earth in kilometers. Use 3956 for miles
     return c * r
 
-        
+def coord_list_to_line_string(coordinates):
+    if len(coordinates)>1:
+        return LineString(coordinates)
+    elif len(coordinates)>0:
+        return Point(coordinates)
+    else:
+        return None
+       
 class US_State():
     def __init__(self, state_fips, year=2017, geom_type='block_group'):
         """
@@ -443,12 +445,15 @@ class Simulation():
         sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
         return sim_pop
         
-    def create_trip_table(self, sim_pop, attributes):
+    def create_trip_table(self, sim_pop, attributes=None):
         """
         For every person who passes through the simulation area:
             add all their trips to a trip table
         
         """
+        if attributes==None:
+            attributes=[col for col in sim_pop.columns if col not in [
+                    'home_geoid', 'work_geoid', 'activities','start_times', 'locations']]
         all_trips=[]
         for ind, row in sim_pop.iterrows():
             activities=row['activities']
@@ -488,7 +493,13 @@ class Simulation():
             route_table_this_mode['attributes']=routes['attributes']
             route_table=route_table.append(route_table_this_mode)
         return route_table
-        
+    
+    def route_table_to_geo(self, route_table):    
+        route_table['line_string']=route_table.apply(lambda row: 
+            coord_list_to_line_string(row['attributes']['coordinates']), axis=1)
+        route_gpd=gpd.GeoDataFrame(route_table, geometry='line_string')
+        return route_gpd
+                
 
     
         
