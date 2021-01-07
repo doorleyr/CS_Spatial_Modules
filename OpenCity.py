@@ -497,8 +497,22 @@ class Simulation():
     def route_table_to_geo(self, route_table):    
         route_table['line_string']=route_table.apply(lambda row: 
             coord_list_to_line_string(row['attributes']['coordinates']), axis=1)
-        route_gpd=gpd.GeoDataFrame(route_table, geometry='line_string')
-        return route_gpd
+        route_gdf=gpd.GeoDataFrame(route_table, geometry='line_string')
+        return route_gdf
+    
+    def route_gdf_to_trips_geojson(self, route_gdf, start_day_time_stamp):
+        geo_dict=route_gdf.__geo_interface__
+        for i_f, feat in enumerate(geo_dict['features']):
+            if feat['geometry'] is not None:
+                coordinates=feat['geometry']['coordinates']
+                time_metric=self.mob_sys.modes[feat['properties']['mode']].weight_metric
+                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+(1/60)*np.cumsum(feat['properties']['attributes'][time_metric]))
+                timestamps=[start_day_time_stamp+int(t) for t in timestamps]
+                new_coordinates=[[c[0], c[1], 0, timestamps[i]] for i,c in enumerate(coordinates)]
+                geo_dict['features'][i_f]['geometry']['coordinates']=new_coordinates
+            del geo_dict['features'][i_f]['properties']['attributes']
+            del geo_dict['features'][i_f]['properties']['node_path']    
+        return geo_dict
                 
 
     
