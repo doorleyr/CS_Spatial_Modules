@@ -1,4 +1,4 @@
-# CS_ESG_Community_Metrics
+# OpenCity
 Easily create mobility simulations for any location in the USA using open data. 
 
 ## Usage
