@@ -52,6 +52,7 @@ Define modes of transportation
 drive_dict={
     'target_network_id': 'drive',
     'weight_metric': 'distance'}
+modes={'drive': drive_dict}
 ```
 
 Create mobility system using the pandana network(s) and mode definition(s)
