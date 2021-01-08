@@ -414,7 +414,6 @@ class Simulation():
         return all_trips_df
     
     def default_location_chooser(self, sim_pop_row, zones):
-        print("Chhosing locations for each activity")
         locations=[]
         for activity in sim_pop_row['activities']:
             if activity=='H':
@@ -441,7 +440,9 @@ class Simulation():
             self.mode_chooser=mode_chooser
             
     def create_activity_schedules(self, sim_pop):
+        print("Scheduling activities")
         sim_pop=sim_pop.apply(lambda row: self.scheduler(row), axis=1)
+        print("Chhosing locations for each activity")
         sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
         return sim_pop
         
@@ -506,7 +507,7 @@ class Simulation():
             if feat['geometry'] is not None:
                 coordinates=feat['geometry']['coordinates']
                 time_metric=self.mob_sys.modes[feat['properties']['mode']].weight_metric
-                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+(1/60)*np.cumsum(feat['properties']['attributes'][time_metric]))
+                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+60*np.cumsum(feat['properties']['attributes'][time_metric]))
                 timestamps=[start_day_time_stamp+int(t) for t in timestamps]
                 new_coordinates=[[c[0], c[1], 0, timestamps[i]] for i,c in enumerate(coordinates)]
                 geo_dict['features'][i_f]['geometry']['coordinates']=new_coordinates
