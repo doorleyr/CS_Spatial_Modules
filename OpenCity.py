@@ -393,9 +393,7 @@ class Simulation():
         """
         gives everyone a schedule of [home, work, other, work, home]
         """
-        print("Choosing activities")
         sim_pop_row['activities']=['H', 'W', 'O','W','H']
-        print("Assgning start-times to activities")
         durations_hrs= [6+4*random.random(), # starts work between 6am and 1pm
                    3+2*random.random(), # works for 3-5 hours
                    0.5+1*random.random(), # break between 0.5 and 1.5 hours

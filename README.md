@@ -52,7 +52,7 @@ Define modes of transportation
 drive_dict={
     'target_network_id': 'drive',
     'weight_metric': 'distance'}
-modes={'drive': drive_dict}
+modes={'drive': Mode(drive_dict)}
 ```
 
 Create mobility system using the pandana network(s) and mode definition(s)
@@ -69,9 +69,11 @@ simpop_df=sim.get_simpop_subset(simpop_df, sample_N=10000)
 ```
 
 ### Simulate trips and trajectories
+```
 simpop_df=sim.create_activity_schedules(simpop_df)
 all_trips_df=sim.create_trip_table(attributes)
 route_table=sim.get_routes_table(all_trips_df)
+```
 
 ### Visualising Outputs
 Get resulting trips as a GeoDataFrame of 'LineString's
