@@ -395,7 +395,7 @@ class Simulation():
         return sim_pop.groupby(['home_geoid', 'work_geoid']).size()
     
     def get_zone_coords(self):
-        return zones[['x_centroid', 'y_centroid']]
+        return self.zones[['x_centroid', 'y_centroid']]
     
     def check_zones(self, sim_pop, zones):
         all_zones_sim_pop=set(list(sim_pop['home_geoid'])+list(sim_pop['work_geoid']))
