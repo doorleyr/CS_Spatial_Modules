@@ -377,8 +377,8 @@ class Simulation():
     def get_vis_nodes(self):
         print('Finding visible nodes')
         self.vis_nodes={}
-        for net in networks:
-            self.vis_nodes[net]=[ind for ind, row in networks[net].nodes_df.iterrows(
+        for net in self.mob_sys.networks:
+            self.vis_nodes[net]=[ind for ind, row in self.mob_sys.networks[net].nodes_df.iterrows(
             ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
   
     def get_simpop_subset(self, sim_pop, sample_N=None):
