@@ -18,6 +18,7 @@ import random
 from shapely.geometry import Point, LineString
 
 def get_haversine_distance(point_1, point_2):
+    # TODO: vectorise for fast calculation of multiple queries
     """
     Calculate the distance between any 2 points on earth given as [lon, lat]
     """
@@ -49,10 +50,10 @@ class US_State():
         self.state=us.states.lookup(self.state_fips)
         self.geom_type=geom_type
         self.year=year
-    def get_geometry(self, center_x_y=None, 
+    def get_geometry(self, centre_x_y=None, 
                      radius=None, target_crs="EPSG:4326"):
         """
-        if center_lon_lat and radius are given, the returned geometry will be
+        if centre_lon_lat and radius are given, the returned geometry will be
         a subset of the zones in the state
         radius should be specified in meters
         """
@@ -73,15 +74,15 @@ class US_State():
         self.geom['centroid']=self.geom['geometry'].centroid
         self.geom['x_centroid']=self.geom.apply(lambda row: row['centroid'].x, axis=1)
         self.geom['y_centroid']=self.geom.apply(lambda row: row['centroid'].y, axis=1)
-        if ((center_x_y is not None) and (radius is not None)):
+        if ((centre_x_y is not None) and (radius is not None)):
             print('\t Subsetting zones by distance')
             if target_crs=="EPSG:4326":
                 dist_from_centre=self.geom.apply(lambda row: get_haversine_distance(
-                        [row['x_centroid'], row['y_centroid']], center_x_y), axis=1)
+                        [row['x_centroid'], row['y_centroid']], centre_x_y), axis=1)
             elif self.geom.crs.axis_info[0] == 'metre':
                 print('Warning: distance calculation with projected coordinate system untested')
-                dist_from_centre=np.sqrt(np.power(self.geom['x_centroid']-center_x_y[0], 2)+ 
-                                         np.power(self.geom['y_centroid']-center_x_y[1], 2))
+                dist_from_centre=np.sqrt(np.power(self.geom['x_centroid']-centre_x_y[0], 2)+ 
+                                         np.power(self.geom['y_centroid']-centre_x_y[1], 2))
             self.geoid_include=list(self.geom.index[dist_from_centre<=radius].values)
             if len(self.geoid_include)==0:
                 print('\t Warning: resulting geometry is empty')
@@ -209,7 +210,7 @@ class US_State():
             sampled_work.extend([row['w_geoid']]*n)
         return pd.DataFrame.from_dict({'age':sampled_age, 'earnings': sampled_earning, 'industry': sampled_industry, 'home_geoid': sampled_home,
                                                    'work_geoid': sampled_work}, orient='columns')
-           
+
 class MobilitySystem():
     def __init__(self, modes, networks):
         """
@@ -222,6 +223,9 @@ class MobilitySystem():
         self.modes = modes
         self.networks = networks
         self.build_link_attribute_lookup()
+        self.edge_ordering={}
+        for network in networks:
+            self.edge_ordering[network]=list(networks[network].edges_df.index)
         
     def update_modes(self,modes):
         """
@@ -263,10 +267,10 @@ class MobilitySystem():
                 temp['from']=list(edges_df['to'].values)
                 temp['to']=list(edges_df['from'].values)
                 edges_df=edges_df.append(temp)
-        		# eliminate duplicates, keeping the lowest of each weight metric
-        		# in general other attributes are the same for each duplicate
-        		# note that for other attributes which differ across links with the same a and b nodes (like link type)
-        		# this approach may give incorrect results.
+                # eliminate duplicates, keeping the lowest of each weight metric
+                # in general other attributes are the same for each duplicate
+                # note that for other attributes which differ across links with the same a and b nodes (like link type)
+                # this approach may give incorrect results.
             weight_metrics= self.networks[network_id].impedance_names
             agg_dict={weight: 'min' for weight in weight_metrics}
             for col in edges_df.columns:
@@ -275,9 +279,9 @@ class MobilitySystem():
             edges_df=edges_df.groupby(edges_df.index).agg(agg_dict)
             # add node coordinates
             edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='from').rename(
-		        columns={'x': 'a_node_x', 'y': 'a_node_y'})
+                columns={'x': 'a_node_x', 'y': 'a_node_y'})
             edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='to').rename(
-		        columns={'x': 'b_node_x', 'y': 'b_node_y'})
+                columns={'x': 'b_node_x', 'y': 'b_node_y'})
             self.attr_lookups[network_id]=edges_df.to_dict(orient='index')
 
     def get_one_route(self, mode_id, node_a, node_b, include_attributes=False):
@@ -299,27 +303,29 @@ class MobilitySystem():
             attributes=[self.get_path_link_attributes(np, target_network_id) for np in node_paths]
             return {'node_path': node_paths, 'attributes': attributes}
         return node_paths 
-    # TODO: add function to download OSM networks
     
     def get_path_link_attributes(self, path, network_id, attribute_names=None):
-        # TODO: call from the get_routes functions (if asked for)
         if attribute_names==None:
             attribute_names=self.networks[network_id].impedance_names
         output={attr: [] for attr in attribute_names}
         if len(path)>1:
             coordinates=[]
+            edges=[]
             for node_ind in range(len(path)-1):
                 from_node=path[node_ind]
                 to_node=path[node_ind+1]
+                edges.append((from_node, to_node))
                 this_link_attrs=self.attr_lookups[network_id][(from_node, to_node)]
                 for attr in attribute_names:
                     output[attr].append(this_link_attrs[attr])
                 coordinates+=[[this_link_attrs['a_node_x'], this_link_attrs['a_node_y']]]
             coordinates+=[[this_link_attrs['b_node_x'], this_link_attrs['b_node_y']]]
             output['coordinates']=coordinates
+            output['edges']=edges
             return output
         else:
             output['coordinates']=[]
+            output['edges']=[]
             return output
             
 
@@ -347,10 +353,10 @@ class Zones():
         if geoid_col is not None:
             zones_gdf=zones_gdf.set_index(geoid_col)
         self.gdf=zones_gdf
-    
- 
+
 class Simulation():
-    def __init__(self, sim_pop, mob_sys, zones,  sim_geoids=None):
+    def __init__(self, sim_pop, mob_sys, zones,  sim_geoids=None, person_attributes=None,
+                centre_x_y=None, vis_radius=None):
         self.scheduler=self.default_scheduler
         self.location_chooser=self.default_location_chooser
         self.mode_chooser=self.default_mode_chooser
@@ -358,8 +364,23 @@ class Simulation():
         self.mob_sys=mob_sys
         self.zones=zones
         self.sim_geoids=sim_geoids
+        self.centre_x_y=centre_x_y
+        self.vis_radius=vis_radius
         self.get_close_node_table()
+        if person_attributes==None:
+            person_attributes=[col for col in sim_pop.columns if col not in [
+                        'home_geoid', 'work_geoid']]
+        self.person_attributes=person_attributes
+        if ((centre_x_y is not None) and (vis_radius is not None)):
+            self.get_vis_nodes()
         
+    def get_vis_nodes(self):
+        print('Finding visible nodes')
+        self.vis_nodes={}
+        for net in networks:
+            self.vis_nodes[net]=[ind for ind, row in networks[net].nodes_df.iterrows(
+            ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
+  
     def get_simpop_subset(self, sim_pop, sample_N=None):
         sim_pop=sim_pop.reset_index(drop=True)
         if self.sim_geoids is not None:
@@ -370,7 +391,12 @@ class Simulation():
                 sim_pop=sim_pop.sample(n=sample_N)
         return sim_pop
         
-        
+    def get_od_flows(self, sim_pop):
+        return sim_pop.groupby(['home_geoid', 'work_geoid']).size()
+    
+    def get_zone_coords(self):
+        return zones[['x_centroid', 'y_centroid']]
+    
     def check_zones(self, sim_pop, zones):
         all_zones_sim_pop=set(list(sim_pop['home_geoid'])+list(sim_pop['work_geoid']))
         assert all(zone in zones.index for zone in all_zones_sim_pop)
@@ -407,7 +433,7 @@ class Simulation():
         """
         print("Choosing modes")
         all_trips_df['mode']='drive'
-        all_trips_df['net']='drive'
+#         all_trips_df['net']='drive'
         
         return all_trips_df
     
@@ -444,15 +470,12 @@ class Simulation():
         sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
         return sim_pop
         
-    def create_trip_table(self, sim_pop, attributes=None):
+    def create_trip_table(self, sim_pop):
         """
         For every person who passes through the simulation area:
             add all their trips to a trip table
         
         """
-        if attributes==None:
-            attributes=[col for col in sim_pop.columns if col not in [
-                    'home_geoid', 'work_geoid', 'activities','start_times', 'locations']]
         all_trips=[]
         for ind, row in sim_pop.iterrows():
             activities=row['activities']
@@ -465,7 +488,7 @@ class Simulation():
                       'to_zone': locations[i+1],
                       'person_id': row.name,
                       'start_time': start_times[i+1]}
-                for attr in attributes:
+                for attr in self.person_attributes:
                     trip[attr]=row[attr]
                 all_trips.append(trip)
         all_trips_df=pd.DataFrame(all_trips)
@@ -475,6 +498,14 @@ class Simulation():
         all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='to_zone').rename(columns={
                 'node_'+net: 'to_node_'+net for net in self.mob_sys.networks})
         return all_trips_df
+    
+    # TODO: if I'm ultimately always using the traversal tables (rather than route_table)
+    # then I should rethink this process- there's no need to get attributes/coordinates for every time a link
+    # is traversed if I'm then going to groupby link and just take the first instance for each.
+    # just get the link ids with the person attributes. After the grouby operations, then get the
+    # cordinates etc.
+    # Edge weight is needed however for building the node traversal table
+    # For the node traversals
     
     def get_routes_table(self, all_trips_df):
         route_table=pd.DataFrame()
@@ -493,6 +524,89 @@ class Simulation():
             route_table=route_table.append(route_table_this_mode)
         return route_table
     
+    def get_edge_traversals(self, route_table):
+        """
+        Create a table with a row for every time someone travserses a link
+        Include edge identifier, from coordinate, to coordinate and personal attributes
+        """
+        route_table['n_edges']=route_table.apply(lambda row: len(row['attributes']['edges']), axis=1)
+        edge_traversal={'edge_id': [], 'from_coord': [], 'to_coord': []}
+        for ind, row in route_table.iterrows():
+            edge_traversal['edge_id'].extend(row['attributes']['edges'].copy())
+            route_coords=row['attributes']['coordinates'].copy()
+            edge_traversal['from_coord'].extend(route_coords[:-1])
+            edge_traversal['to_coord'].extend(route_coords[1:])
+        # person-level attributes- replicated for each edge in the route
+        for p_attr in (self.person_attributes+['start_time', 'mode']):
+            attr_as_list=list(route_table[p_attr])
+            n_edges_by_route=list(route_table['n_edges'])
+            this_attribute_by_edge=[]
+            for t in range(len(attr_as_list)):
+                this_attribute_by_edge.extend([attr_as_list[t]]*n_edges_by_route[t])
+            edge_traversal[p_attr]=this_attribute_by_edge
+        return pd.DataFrame(edge_traversal) 
+
+    def get_node_traversals(self, route_table):
+        route_table['n_nodes']=route_table.apply(lambda row: len(row['node_path']), axis=1)
+        node_traversal={'coord': [], 'ts': [], 'node_id':[]}
+        for ind, row in route_table.iterrows():
+            mode_id=row['mode']
+            target_network_id=self.mob_sys.modes[mode_id].target_network_id
+            weight_metric=self.mob_sys.modes[mode_id].weight_metric
+            if row['n_nodes']>1:
+#                 print('{}_{}_{}'.format(i_r, len(route['coordinates']), len(node_paths[i_r])))
+                node_traversal['coord'].extend(row['attributes']['coordinates'].copy())
+                node_traversal['node_id'].extend(row['node_path'].copy())
+                trip_start=int(row['start_time'])
+                timestamps=[trip_start]+list((trip_start+np.cumsum(row['attributes'][weight_metric].copy())).astype(int))
+                node_traversal['ts'].extend(timestamps)
+        # person-level attributes- replicated for each edge in the route
+        for p_attr in (self.person_attributes+['mode', 'person_id']):
+            attr_as_list=list(route_table[p_attr])
+            n_nodes_by_route=list(route_table['n_nodes'])
+            this_attribute_by_node=[]
+            for t in range(len(attr_as_list)):
+                if n_nodes_by_route[t]>1:
+                    this_attribute_by_node.extend([attr_as_list[t]]*n_nodes_by_route[t])
+            node_traversal[p_attr]=this_attribute_by_node
+#         for col in node_traversal:
+#             print('{}_{}'.format(col, len(node_traversal[col])))
+        return pd.DataFrame(node_traversal)  
+    
+    def get_edge_traffic(self, edge_traversal_table, mode):
+        edge_traversal_table['count']=1
+        agg_dict={'from_coord': lambda x: x.iloc[0],
+                  'to_coord': lambda x: x.iloc[0],
+                  'count': sum}
+        agg_edge_traffic=edge_traversal_table.groupby('edge_id').agg(agg_dict)
+
+        if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
+            agg_edge_traffic['in_scope']=agg_edge_traffic.apply(lambda row:get_haversine_distance(
+                row['from_coord'], self.centre_x_y)<self.vis_radius, axis=1)
+            return agg_edge_traffic[agg_edge_traffic['in_scope']]
+        else:
+            return agg_edge_traffic
+        
+    def node_traversal_to_trips_json(self, node_traversal_table):
+        if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
+#             node_traversal_table['in_scope']=node_traversal_table.apply(lambda row:get_haversine_distance(
+#                 row['coord'], centre_x_y)<vis_radius, axis=1)           
+#             node_traversal_table=node_traversal_table[node_traversal_table['in_scope']]
+            for mode in node_traversal_table['mode'].unique():
+                net=self.mob_sys.modes[mode].target_network_id
+                node_traversal_table.loc[node_traversal_table['mode']==mode, 'in_scope'
+                                        ]=node_traversal_table.loc[node_traversal_table['mode']==mode, 'node_id'].isin(self.vis_nodes[net])
+        node_traversal_table['coord_ts']=node_traversal_table.apply(lambda row: row['coord']+[row['ts']], axis=1)
+        agg_dict={'coord_ts': lambda x: list(x),
+#                   'coord': lambda x: list(x),
+#                   'ts': lambda x: list(x),
+                  'age': lambda x: x.iloc[0],
+                  'earnings': lambda x: x.iloc[0],
+                  'industry': lambda x: x.iloc[0]}
+        node_traversal_per_person_mode=node_traversal_table.groupby(['person_id', 'mode']).agg(agg_dict)
+        trips=node_traversal_per_person_mode.to_dict(orient='records')
+        return trips       
+  
     def route_table_to_geo(self, route_table):    
         route_table['line_string']=route_table.apply(lambda row: 
             coord_list_to_line_string(row['attributes']['coordinates']), axis=1)

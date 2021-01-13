@@ -64,14 +64,14 @@ mob_sys=MobilitySystem(modes=modes,
 ### Create the Simulation Model
 Optionally define "sim_geoids", a list of geoids to which the simulation will be restricted. Only individuals who live and/or work in one of these zones will be simulated. In order to reduct computational burden, the population can be further restricted to a maximum by using the "sample_N" parameter
 ```
-sim=Simulation(simpop_df, mob_sys, zones, sim_geoids=sim_geoids)
+sim=Simulation(simpop_df, mob_sys, zones)
 simpop_df=sim.get_simpop_subset(simpop_df, sample_N=10000)
 ```
 
 ### Simulate trips and trajectories
 ```
 simpop_df=sim.create_activity_schedules(simpop_df)
-all_trips_df=sim.create_trip_table(attributes)
+all_trips_df=sim.create_trip_table(simpop_df)
 route_table=sim.get_routes_table(all_trips_df)
 ```
 
@@ -83,6 +83,7 @@ route_gdf=sim.route_table_to_geo(route_table)
 Get resulting trips as a geojsoon compatible with the [kepler.gl](https://kepler.gl/) [Trips Layer](https://deck.gl/docs/api-reference/geo-layers/trips-layer). 'start_day_time_stamp' should be the timestamp in epoch seconds format at midnight at the beginning of the day being simulated.
 
 ```
+start_day_time_stamp=
 geo_dict=sim.route_gdf_to_trips_geojson(route_gdf, start_day_time_stamp)
 ```
 
