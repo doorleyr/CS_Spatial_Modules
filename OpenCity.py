@@ -167,7 +167,10 @@ class US_State():
         else:
             print('Geometry {} not recognised'.format(self.geom_type))
             
-    def lodes_to_pop_table(self, subset_name):
+    def lodes_to_pop_table(self, subset_name=None):
+        """
+        People who live OR work in the subset area will be included in the simpop
+        """
         od_subset=self.od
         if subset_name is not None:
             included_geoids=list(self.return_geometry(subset_name).index)
@@ -375,6 +378,11 @@ class Simulation():
             ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
   
     def get_simpop_subset(self, sim_pop, sample_N=None, sim_geoids=None):
+        """
+        People who live OR work in one of the sim_geoids will be included
+
+        """
+
         sim_pop=sim_pop.reset_index(drop=True)
         if sim_geoids is not None:
             sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(sim_geoids))|
@@ -509,8 +517,8 @@ class Simulation():
                                           (~all_trips_df['to_node_'+target_network_id].isnull()))]
             routes=self.mob_sys.get_many_routes(
                 mode_id, 
-                [int(n) for n in route_table_this_mode['from_node_'+target_network_id].values],
-                [int(n) for n in route_table_this_mode['to_node_'+ target_network_id].values], 
+                list(route_table_this_mode['from_node_'+target_network_id].values),
+                list(route_table_this_mode['to_node_'+ target_network_id].values), 
                 include_attributes=True)
             route_table_this_mode['node_path']=routes['node_path']
             route_table_this_mode['attributes']=routes['attributes']
