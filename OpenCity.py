@@ -50,8 +50,7 @@ class US_State():
         self.state=us.states.lookup(self.state_fips)
         self.geom_type=geom_type
         self.year=year
-    def get_geometry(self, centre_x_y=None, 
-                     radius=None, target_crs="EPSG:4326"):
+    def get_geometry(self, target_crs="EPSG:4326"):
         """
         if centre_lon_lat and radius are given, the returned geometry will be
         a subset of the zones in the state
@@ -69,39 +68,31 @@ class US_State():
             self.geom=self.geom.set_index('GEOID10')
         else:
             print('Unrecoginised geometry type: {}'.format(self.geom_type))
-        self.geoid_include=list(self.geom.index)
         self.geom=self.geom.to_crs(target_crs)
-        self.geom['centroid']=self.geom['geometry'].centroid
-        self.geom['x_centroid']=self.geom.apply(lambda row: row['centroid'].x, axis=1)
-        self.geom['y_centroid']=self.geom.apply(lambda row: row['centroid'].y, axis=1)
-        if ((centre_x_y is not None) and (radius is not None)):
-            print('\t Subsetting zones by distance')
-            if target_crs=="EPSG:4326":
-                dist_from_centre=self.geom.apply(lambda row: get_haversine_distance(
-                        [row['x_centroid'], row['y_centroid']], centre_x_y), axis=1)
-            elif self.geom.crs.axis_info[0] == 'metre':
-                print('Warning: distance calculation with projected coordinate system untested')
-                dist_from_centre=np.sqrt(np.power(self.geom['x_centroid']-centre_x_y[0], 2)+ 
-                                         np.power(self.geom['y_centroid']-centre_x_y[1], 2))
-            self.geoid_include=list(self.geom.index[dist_from_centre<=radius].values)
-            if len(self.geoid_include)==0:
-                print('\t Warning: resulting geometry is empty')
+        centroids=self.geom['geometry'].centroid
+        self.geom['x_centroid']=[c.x for c in centroids]
+        self.geom['y_centroid']=[c.y for c in centroids]
+
+    def subset_geom_by_distance(self, centre_x_y, radius, name):        
+        print('\t Subsetting zones by distance')
+        if self.geom.crs.axis_info[0] == 'metre':
+            print('Warning: distance calculation with projected coordinate system untested')
+            dist_from_centre=np.sqrt(np.power(self.geom['x_centroid']-centre_x_y[0], 2)+ 
+                                     np.power(self.geom['y_centroid']-centre_x_y[1], 2))
+        else:
+            dist_from_centre=self.geom.apply(lambda row: get_haversine_distance(
+                    [row['x_centroid'], row['y_centroid']], centre_x_y), axis=1)            
+        self.geom[name]=dist_from_centre<=radius
                 
-    def get_bounds_included(self):
-        bounds_all = self.geom.loc[self.geoid_include].total_bounds
-        return bounds_all
+    def get_bounds(self, subset_name=None):
+        geom=self.return_geometry(subset_name)
+        return geom.total_bounds
     
-    def get_geometries_included(self):
-        subset_geom=self.geom.loc[self.geoid_include]
-        return subset_geom
-                
-    def subset_geometries(self, included):
-        """
-        trip_end should be one of ['home', 'work']
-        included should be a list of geometries
-        
-        """
-        self.geoid_include=included
+    def return_geometry(self, subset_name=None):
+        if subset_name==None:
+            return self.geom
+        else:
+            return self.geom.loc[self.geom[subset_name]]
                 
     def get_lodes_data(self, include=['wac', 'rac', 'od']):
         if 'wac' in include:
@@ -176,10 +167,12 @@ class US_State():
         else:
             print('Geometry {} not recognised'.format(self.geom_type))
             
-    def lodes_to_pop_table(self):
+    def lodes_to_pop_table(self, subset_name):
         od_subset=self.od
-        od_subset=od_subset.loc[((od_subset['h_geoid'].isin(self.geoid_include))&
-                                 (od_subset['w_geoid'].isin(self.geoid_include)))]
+        if subset_name is not None:
+            included_geoids=list(self.return_geometry(subset_name).index)
+            od_subset=od_subset.loc[((od_subset['h_geoid'].isin(included_geoids))&
+                                 (od_subset['w_geoid'].isin(included_geoids)))]
 
         print('Using {} of {} rows in OD data'.format(len(od_subset), len(self.od)))
         # convert counts by attribute to probabilities for each attribute
@@ -381,11 +374,11 @@ class Simulation():
             self.vis_nodes[net]=[ind for ind, row in self.mob_sys.networks[net].nodes_df.iterrows(
             ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
   
-    def get_simpop_subset(self, sim_pop, sample_N=None):
+    def get_simpop_subset(self, sim_pop, sample_N=None, sim_geoids=None):
         sim_pop=sim_pop.reset_index(drop=True)
-        if self.sim_geoids is not None:
-            sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(self.sim_geoids))|
-                          (sim_pop['work_geoid'].isin(self.sim_geoids)))]
+        if sim_geoids is not None:
+            sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(sim_geoids))|
+                          (sim_pop['work_geoid'].isin(sim_geoids)))]
         if sample_N is not None:
             if len(sim_pop)>sample_N:
                 sim_pop=sim_pop.sample(n=sample_N)
