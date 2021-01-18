@@ -620,7 +620,7 @@ class Simulation():
             if feat['geometry'] is not None:
                 coordinates=feat['geometry']['coordinates']
                 time_metric=self.mob_sys.modes[feat['properties']['mode']].weight_metric
-                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+60*np.cumsum(feat['properties']['attributes'][time_metric]))
+                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+np.cumsum(feat['properties']['attributes'][time_metric]))
                 timestamps=[start_day_time_stamp+int(t) for t in timestamps]
                 new_coordinates=[[c[0], c[1], 0, timestamps[i]] for i,c in enumerate(coordinates)]
                 geo_dict['features'][i_f]['geometry']['coordinates']=new_coordinates
