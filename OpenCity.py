@@ -207,102 +207,51 @@ class US_State():
         return pd.DataFrame.from_dict({'age':sampled_age, 'earnings': sampled_earning, 'industry': sampled_industry, 'home_geoid': sampled_home,
                                                    'work_geoid': sampled_work}, orient='columns')
 
-class MobilitySystem():
-    def __init__(self, modes, networks):
-        """
-        modes should be a dictionary with the identifier as key 
-        and the mode object as value
-        networks should be a dictionary where keys are network ids and values 
-        are pandana network objects
-        """
-        assert all(modes[m].target_network_id in networks.keys() for m in modes), "A network ID doesn't exist"
-        self.modes = modes
-        self.networks = networks
+
+class PdnaNetwork():
+    """
+    a wrapper around a pandana network object
+    which adds some additional methods
+
+    """
+    def __init__(self, network):
+        self.net=network
         self.build_link_attribute_lookup()
-        self.edge_ordering={}
-        for network in networks:
-            self.edge_ordering[network]=list(networks[network].edges_df.index)
-        
-    def update_modes(self,modes):
-        """
-        add new networks and/or update existing modes
-        modes should be a dictionary with the identifier as key 
-        and the mode object as value
-        """
-        self.modes.update(modes)
-        
-    def remove_mode(self,mode_id):
-        del self.modes[mode_id]
-        
-    def get_mode_by_id(self, mode_id):
-        return self.modes[mode_id]
-    
-    def update_networks(self, networks):
-        """
-        add new networks and/or update existing networks
-        networks should be a dictionary where keys are network ids and values 
-        are pandana network objects
-        """
-        self.networks.update(networks)
-        self.build_link_attribute_lookup()
-        
-    def remove_network(self, network_id):
-        del self.networks[network_id]
-        del self.attr_lookups[network_id]
-        
-    def get_network_by_id(self, network_id):
-        return self.networks[network_id]
 
     def build_link_attribute_lookup(self):
         print("building link attribute lookup")
-        self.attr_lookups={}
-        for network_id in self.networks:
-            edges_df=self.networks[network_id].edges_df.copy()
-            if self.networks[network_id]._twoway:
-                temp=edges_df.set_index(['to', 'from'], drop=False)
-                temp['from']=list(edges_df['to'].values)
-                temp['to']=list(edges_df['from'].values)
-                edges_df=edges_df.append(temp)
-                # eliminate duplicates, keeping the lowest of each weight metric
-                # in general other attributes are the same for each duplicate
-                # note that for other attributes which differ across links with the same a and b nodes (like link type)
-                # this approach may give incorrect results.
-            weight_metrics= self.networks[network_id].impedance_names
-            agg_dict={weight: 'min' for weight in weight_metrics}
-            for col in edges_df.columns:
-                if col not in weight_metrics:
-                    agg_dict.update({col: lambda x: x.iloc[0]})
-            edges_df=edges_df.groupby(edges_df.index).agg(agg_dict)
-            # add node coordinates
-            edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='from').rename(
-                columns={'x': 'a_node_x', 'y': 'a_node_y'})
-            edges_df=edges_df.join(self.networks[network_id].nodes_df, how='left', on='to').rename(
-                columns={'x': 'b_node_x', 'y': 'b_node_y'})
-            self.attr_lookups[network_id]=edges_df.to_dict(orient='index')
+        self.attr_lookup={}
+        edges_df=self.net.edges_df.copy()
+        if self.net._twoway:
+            temp=edges_df.set_index(['to', 'from'], drop=False)
+            temp['from']=list(edges_df['to'].values)
+            temp['to']=list(edges_df['from'].values)
+            edges_df=edges_df.append(temp)
+            # eliminate duplicates, keeping the lowest of each weight metric
+            # in general other attributes are the same for each duplicate
+            # note that for other attributes which differ across links with the same a and b nodes (like link type)
+            # this approach may give incorrect results.
+        weight_metrics= self.net.impedance_names
+        agg_dict={weight: 'min' for weight in weight_metrics}
+        for col in edges_df.columns:
+            if col not in weight_metrics:
+                agg_dict.update({col: lambda x: x.iloc[0]})
+        edges_df=edges_df.groupby(edges_df.index).agg(agg_dict)
+        # add node coordinates
+        edges_df=edges_df.join(self.net.nodes_df, how='left', on='from').rename(
+            columns={'x': 'a_node_x', 'y': 'a_node_y'})
+        edges_df=edges_df.join(self.net.nodes_df, how='left', on='to').rename(
+            columns={'x': 'b_node_x', 'y': 'b_node_y'})
+        self.attr_lookup=edges_df.to_dict(orient='index')
 
-    def get_one_route(self, mode_id, node_a, node_b, include_attributes=False):
-        target_network_id=self.modes[mode_id].target_network_id
-        weight_metric=self.modes[mode_id].weight_metric
-        node_path= self.networks[target_network_id].shortest_path(
-                node_a, node_b, imp_name=weight_metric)
-        if include_attributes==True:
-            attributes=self.get_path_link_attributes(node_path, target_network_id)
-            return {'node_path': node_path, 'attributes': attributes}
-        return node_path       
-    
-    def get_many_routes(self, mode_id, nodes_a, nodes_b, include_attributes=False):
-        target_network_id=self.modes[mode_id].target_network_id
-        weight_metric=self.modes[mode_id].weight_metric
-        node_paths= self.networks[target_network_id].shortest_paths(
-                nodes_a, nodes_b, imp_name=weight_metric)
-        if include_attributes==True:
-            attributes=[self.get_path_link_attributes(np, target_network_id) for np in node_paths]
-            return {'node_path': node_paths, 'attributes': attributes}
-        return node_paths 
-    
-    def get_path_link_attributes(self, path, network_id, attribute_names=None):
-        if attribute_names==None:
-            attribute_names=self.networks[network_id].impedance_names
+    def get_node_ids(self, x_col,y_col):
+        return self.net.get_node_ids(x_col,y_col)
+
+    def shortest_paths(self, nodes_a, nodes_b, imp_name):
+        return self.net.shortest_paths(nodes_a, nodes_b, imp_name)
+
+    def get_path_link_attributes(self, path):
+        attribute_names=self.net.impedance_names
         output={attr: [] for attr in attribute_names}
         if len(path)>1:
             coordinates=[]
@@ -311,7 +260,7 @@ class MobilitySystem():
                 from_node=path[node_ind]
                 to_node=path[node_ind+1]
                 edges.append((from_node, to_node))
-                this_link_attrs=self.attr_lookups[network_id][(from_node, to_node)]
+                this_link_attrs=self.attr_lookup[(from_node, to_node)]
                 for attr in attribute_names:
                     output[attr].append(this_link_attrs[attr])
                 coordinates+=[[this_link_attrs['a_node_x'], this_link_attrs['a_node_y']]]
@@ -323,7 +272,39 @@ class MobilitySystem():
             output['coordinates']=[]
             output['edges']=[]
             return output
-            
+
+class MobilitySystem():
+    def __init__(self, modes, networks):
+        """
+        modes should be a dictionary with the identifier as key 
+        and the mode object as value
+        networks should be a dictionary where keys are network ids and values 
+        are network objects
+        """
+        assert all(modes[m].target_network_id in networks.keys() for m in modes), "A network ID doesn't exist"
+        self.modes = modes
+        self.networks = networks
+
+    # def get_one_route(self, mode_id, node_a, node_b, include_attributes=False):
+    #     target_network_id=self.modes[mode_id].target_network_id
+    #     travel_time_metric=self.modes[mode_id].travel_time_metric
+    #     node_path= self.networks[target_network_id].shortest_path(
+    #             node_a, node_b, imp_name=travel_time_metric)
+    #     if include_attributes==True:
+    #         attributes=self.get_path_link_attributes(node_path, target_network_id)
+    #         return {'node_path': node_path, 'attributes': attributes}
+    #     return node_path       
+    
+    def get_many_routes(self, mode_id, nodes_a, nodes_b, include_attributes=False):
+        target_network_id=self.modes[mode_id].target_network_id
+        travel_time_metric=self.modes[mode_id].travel_time_metric
+        node_paths= self.networks[target_network_id].shortest_paths(
+                nodes_a, nodes_b, imp_name=travel_time_metric)
+        if include_attributes==True:
+            attributes=[self.networks[target_network_id].get_path_link_attributes(np) for np in node_paths]
+            return {'node_path': node_paths, 'attributes': attributes}
+        else:
+            return node_paths           
 
 class Mode():
     def __init__(self, mode_dict):
@@ -335,24 +316,23 @@ class Mode():
         """
         self.mode_dict=mode_dict
         self.target_network_id=mode_dict['target_network_id']
-        self.weight_metric=mode_dict['weight_metric']
+        self.travel_time_metric=mode_dict['travel_time_metric']
 
-class Zones():
-    def __init__(self, zones_gdf, geoid_col=None):
-        """
-        If the index if not the geoid, then the geoid_col should be specified
-        """       
-        # TODO: support geojson?
-        zones_gdf_centroid=zones_gdf["geometry"].centroid
-        zones_gdf['x_centroid']=[c.x for c in zones_gdf_centroid]
-        zones_gdf['y_centroid']=[c.y for c in zones_gdf_centroid]
-        if geoid_col is not None:
-            zones_gdf=zones_gdf.set_index(geoid_col)
-        self.gdf=zones_gdf
+# class Zones():
+#     def __init__(self, zones_gdf, geoid_col=None):
+#         """
+#         If the index if not the geoid, then the geoid_col should be specified
+#         """       
+#         # TODO: support geojson?
+#         zones_gdf_centroid=zones_gdf["geometry"].centroid
+#         zones_gdf['x_centroid']=[c.x for c in zones_gdf_centroid]
+#         zones_gdf['y_centroid']=[c.y for c in zones_gdf_centroid]
+#         if geoid_col is not None:
+#             zones_gdf=zones_gdf.set_index(geoid_col)
+#         self.gdf=zones_gdf
 
 class Simulation():
-    def __init__(self, sim_pop, mob_sys, zones,  sim_geoids=None, person_attributes=None,
-                centre_x_y=None, vis_radius=None):
+    def __init__(self, sim_pop, mob_sys, zones,  sim_geoids=None, person_attributes=None):
         self.scheduler=self.default_scheduler
         self.location_chooser=self.default_location_chooser
         self.mode_chooser=self.default_mode_chooser
@@ -360,22 +340,22 @@ class Simulation():
         self.mob_sys=mob_sys
         self.zones=zones
         self.sim_geoids=sim_geoids
-        self.centre_x_y=centre_x_y
-        self.vis_radius=vis_radius
+        # self.centre_x_y=centre_x_y
+        # self.vis_radius=vis_radius
         self.get_close_node_table()
         if person_attributes==None:
             person_attributes=[col for col in sim_pop.columns if col not in [
                         'home_geoid', 'work_geoid']]
         self.person_attributes=person_attributes
-        if ((centre_x_y is not None) and (vis_radius is not None)):
-            self.get_vis_nodes()
+        # if ((centre_x_y is not None) and (vis_radius is not None)):
+        #     self.get_vis_nodes()
         
-    def get_vis_nodes(self):
-        print('Finding visible nodes')
-        self.vis_nodes={}
-        for net in self.mob_sys.networks:
-            self.vis_nodes[net]=[ind for ind, row in self.mob_sys.networks[net].nodes_df.iterrows(
-            ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
+    # def get_vis_nodes(self):
+    #     print('Finding visible nodes')
+    #     self.vis_nodes={}
+    #     for net in self.mob_sys.networks:
+    #         self.vis_nodes[net]=[ind for ind, row in self.mob_sys.networks[net].net.nodes_df.iterrows(
+    #         ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
   
     def get_simpop_subset(self, sim_pop, sample_N=None, sim_geoids=None):
         """
@@ -553,13 +533,13 @@ class Simulation():
         for ind, row in route_table.iterrows():
             mode_id=row['mode']
             target_network_id=self.mob_sys.modes[mode_id].target_network_id
-            weight_metric=self.mob_sys.modes[mode_id].weight_metric
+            travel_time_metric=self.mob_sys.modes[mode_id].travel_time_metric
             if row['n_nodes']>1:
 #                 print('{}_{}_{}'.format(i_r, len(route['coordinates']), len(node_paths[i_r])))
                 node_traversal['coord'].extend(row['attributes']['coordinates'].copy())
                 node_traversal['node_id'].extend(row['node_path'].copy())
                 trip_start=int(row['start_time'])
-                timestamps=[trip_start]+list((trip_start+np.cumsum(row['attributes'][weight_metric].copy())).astype(int))
+                timestamps=[trip_start]+list((trip_start+np.cumsum(row['attributes'][travel_time_metric].copy())).astype(int))
                 node_traversal['ts'].extend(timestamps)
         # person-level attributes- replicated for each edge in the route
         for p_attr in (self.person_attributes+['mode', 'person_id']):
@@ -580,23 +560,24 @@ class Simulation():
                   'to_coord': lambda x: x.iloc[0],
                   'count': sum}
         agg_edge_traffic=edge_traversal_table.groupby('edge_id').agg(agg_dict)
+        return agg_edge_traffic
 
-        if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
-            agg_edge_traffic['in_scope']=agg_edge_traffic.apply(lambda row:get_haversine_distance(
-                row['from_coord'], self.centre_x_y)<self.vis_radius, axis=1)
-            return agg_edge_traffic[agg_edge_traffic['in_scope']]
-        else:
-            return agg_edge_traffic
+        # if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
+        #     agg_edge_traffic['in_scope']=agg_edge_traffic.apply(lambda row:get_haversine_distance(
+        #         row['from_coord'], self.centre_x_y)<self.vis_radius, axis=1)
+        #     return agg_edge_traffic[agg_edge_traffic['in_scope']]
+        # else:
+        #     return agg_edge_traffic
         
     def node_traversal_to_trips_json(self, node_traversal_table):
-        if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
-#             node_traversal_table['in_scope']=node_traversal_table.apply(lambda row:get_haversine_distance(
-#                 row['coord'], centre_x_y)<vis_radius, axis=1)           
-#             node_traversal_table=node_traversal_table[node_traversal_table['in_scope']]
-            for mode in node_traversal_table['mode'].unique():
-                net=self.mob_sys.modes[mode].target_network_id
-                node_traversal_table.loc[node_traversal_table['mode']==mode, 'in_scope'
-                                        ]=node_traversal_table.loc[node_traversal_table['mode']==mode, 'node_id'].isin(self.vis_nodes[net])
+#         if ((self.centre_x_y is not None) and (self.vis_radius is not None)):
+# #             node_traversal_table['in_scope']=node_traversal_table.apply(lambda row:get_haversine_distance(
+# #                 row['coord'], centre_x_y)<vis_radius, axis=1)           
+# #             node_traversal_table=node_traversal_table[node_traversal_table['in_scope']]
+#             for mode in node_traversal_table['mode'].unique():
+#                 net=self.mob_sys.modes[mode].target_network_id
+#                 node_traversal_table.loc[node_traversal_table['mode']==mode, 'in_scope'
+#                                         ]=node_traversal_table.loc[node_traversal_table['mode']==mode, 'node_id'].isin(self.vis_nodes[net])                                        
         node_traversal_table['coord_ts']=node_traversal_table.apply(lambda row: row['coord']+[row['ts']], axis=1)
         agg_dict={'coord_ts': lambda x: list(x),
 #                   'coord': lambda x: list(x),
@@ -619,8 +600,8 @@ class Simulation():
         for i_f, feat in enumerate(geo_dict['features']):
             if feat['geometry'] is not None:
                 coordinates=feat['geometry']['coordinates']
-                time_metric=self.mob_sys.modes[feat['properties']['mode']].weight_metric
-                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+np.cumsum(feat['properties']['attributes'][time_metric]))
+                travel_time_metric=self.mob_sys.modes[feat['properties']['mode']].travel_time_metric
+                timestamps=[feat['properties']['start_time']]+list(feat['properties']['start_time']+np.cumsum(feat['properties']['attributes'][travel_time_metric]))
                 timestamps=[start_day_time_stamp+int(t) for t in timestamps]
                 new_coordinates=[[c[0], c[1], 0, timestamps[i]] for i,c in enumerate(coordinates)]
                 geo_dict['features'][i_f]['geometry']['coordinates']=new_coordinates
