@@ -504,6 +504,20 @@ class Simulation():
             route_table_this_mode['attributes']=routes['attributes']
             route_table=route_table.append(route_table_this_mode)
         return route_table
+
+    def routes_to_deckgl_trip(self, route_table):
+        trips=[]
+        for ind, row in route_table.iterrows():
+            coords=row['attributes']['coordinates']
+            if len(coords)>1:
+                cum_time=np.cumsum(row['attributes']['travel_time'])
+                start_time=int(row['start_time'])
+                timestamps=[int(start_time)] + [int(start_time)+ int(ct) for ct in cum_time]
+                this_trip={'coord_ts': [coords[t]+[timestamps[t]] for t in range(len(timestamps))]}
+                for attr in ['mode', 'earnings', 'age', 'industry']:
+                    this_trip[attr]=row[attr]
+                trips.append(this_trip)
+        return trips
     
     def get_edge_traversals(self, route_table):
         """
