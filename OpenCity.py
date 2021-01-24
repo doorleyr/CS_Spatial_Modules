@@ -138,18 +138,19 @@ class US_State():
         
     def format_block_id(self, block_id):
         return str(block_id).zfill(15)
+
+    def format_block_group_id(self, block_id):
+        return str(block_id).zfill(12)
         
     def format_lodes_data(self, block_df):
         block_cols=[c for c in ['h_geocode', 'w_geocode'] if c in block_df.columns]
-        for col in block_cols:
-            block_df[col]=block_df.apply(lambda row: self.format_block_id(row[col]), axis=1)
+
         if self.geom_type=='block':
-            # use the existing geoid, just rename it
+            # use the existing geoid, just format and rename it
+            for col in block_cols:
+                block_df[col]=block_df.apply(lambda row: self.format_block_id(row[col]), axis=1)
             cols_to_rename={col: col.replace('geocode', 'geoid') for col in block_cols}
             block_df=block_df.rename(columns=cols_to_rename)
-#            for col in block_cols:
-#                new_block_col=col.split('_')[0]+'_geoid'
-#                block_df[new_block_col]=block_df[col]
             block_df=block_df.set_index(list(cols_to_rename.values()), drop=False)
             return block_df
         elif self.geom_type=='block_group':
@@ -159,9 +160,12 @@ class US_State():
             block_group_cols=[]
             for col in block_cols:
                 new_bg_col=col.split('_')[0]+'_geoid'
-                block_df[new_bg_col]=block_df.apply(lambda row: row[col][0:12], axis=1)
+                block_df[new_bg_col]=block_df[col].floordiv(1e3)
+                # block_df[new_bg_col]=block_df.apply(lambda row: row[col][0:12], axis=1)
                 block_group_cols.append(new_bg_col)
             bg_df=block_df.groupby(block_group_cols, as_index=False)[cols_to_sum].agg('sum')
+            for col in block_group_cols:
+            	bg_df[col]=bg_df.apply(lambda row: self.format_block_group_id(row[col]), axis=1)
             bg_df=bg_df.set_index(block_group_cols, drop=False)
             return bg_df
         else:

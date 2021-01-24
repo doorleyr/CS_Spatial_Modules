@@ -3,3 +3,4 @@
 *.pyc
 *_dev.ipynb
 *outputs/
+*cache/
