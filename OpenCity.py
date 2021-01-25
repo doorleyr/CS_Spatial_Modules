@@ -171,14 +171,20 @@ class US_State():
         else:
             print('Geometry {} not recognised'.format(self.geom_type))
             
-    def lodes_to_pop_table(self, subset_name=None):
+    def lodes_to_pop_table(self, model_subset_name=None, sim_subset_name=None):
         """
-        People who live OR work in the subset area will be included in the simpop
+        People who will be included in the simpop:
+        - live AND work in the model area 
+        - live OR work in the sim area
         """
         od_subset=self.od
-        if subset_name is not None:
-            included_geoids=list(self.return_geometry(subset_name).index)
+        if model_subset_name is not None:
+            included_geoids=list(self.return_geometry(model_subset_name).index)
             od_subset=od_subset.loc[((od_subset['h_geoid'].isin(included_geoids))&
+                                 (od_subset['w_geoid'].isin(included_geoids)))]
+        if sim_subset_name is not None:
+            included_geoids=list(self.return_geometry(sim_subset_name).index)
+            od_subset=od_subset.loc[((od_subset['h_geoid'].isin(included_geoids))|
                                  (od_subset['w_geoid'].isin(included_geoids)))]
 
         print('Using {} of {} rows in OD data'.format(len(od_subset), len(self.od)))
