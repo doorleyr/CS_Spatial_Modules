@@ -16,6 +16,8 @@ import urllib.request as ur
 from gzip import GzipFile
 import random
 from shapely.geometry import Point, LineString
+import json
+import os
 
 def get_haversine_distance(point_1, point_2):
     # TODO: vectorise for fast calculation of multiple queries
@@ -56,7 +58,7 @@ class US_State():
         a subset of the zones in the state
         radius should be specified in meters
         """
-        
+        #TODO: look for saved geometry first
         print('Getting geometry ({}) for state: {}'.format(self.geom_type, self.state.name))
         if self.geom_type=='block_group':
             self.geom=gpd.read_file('https://www2.census.gov/geo/tiger/TIGER{}/BG/tl_{}_{}_bg.zip'.format(
@@ -137,10 +139,10 @@ class US_State():
         return wac
         
     def format_block_id(self, block_id):
-        return str(block_id).zfill(15)
+        return str(int(block_id)).zfill(15)
 
     def format_block_group_id(self, block_id):
-        return str(block_id).zfill(12)
+        return str(int(block_id)).zfill(12)
         
     def format_lodes_data(self, block_df):
         block_cols=[c for c in ['h_geocode', 'w_geocode'] if c in block_df.columns]
@@ -156,13 +158,14 @@ class US_State():
         elif self.geom_type=='block_group':
             # aggregate blocks to block groups
             cols_not_to_sum=block_cols +['createdate']
-            cols_to_sum=[col for col in block_df.columns if not col in cols_not_to_sum]
             block_group_cols=[]
             for col in block_cols:
                 new_bg_col=col.split('_')[0]+'_geoid'
+                cols_not_to_sum.append(new_bg_col)
                 block_df[new_bg_col]=block_df[col].floordiv(1e3)
                 # block_df[new_bg_col]=block_df.apply(lambda row: row[col][0:12], axis=1)
                 block_group_cols.append(new_bg_col)
+            cols_to_sum=[col for col in block_df.columns if not col in cols_not_to_sum]
             bg_df=block_df.groupby(block_group_cols, as_index=False)[cols_to_sum].agg('sum')
             for col in block_group_cols:
             	bg_df[col]=bg_df.apply(lambda row: self.format_block_group_id(row[col]), axis=1)
@@ -170,6 +173,87 @@ class US_State():
             return bg_df
         else:
             print('Geometry {} not recognised'.format(self.geom_type))
+
+    def remove_non_urban_zones(self):
+        # TODO maybe faster to check centroids
+        print('Subsetting by urbanized areas')
+        save_loc='./data/states/{}/'.format(self.state_fips)
+        save_address=save_loc+'urbanized_geoids_{}.json'.format(self.geom_type)
+        try:
+            urbanized_geoids=json.load(open(save_address))
+        except:
+            ua=gpd.read_file('zip://./data/usa/tl_2017_us_uac10.zip')
+            ua_state=ua.loc[ua['NAMELSAD10'].str.contains(' {}'.format(self.state.abbr))]
+            urbanized=ua_state.loc[ua_state['UATYP10']=='U']
+            urbanized = urbanized.to_crs("EPSG:4326")
+            self.geom['copy_GEOID']=self.geom.index
+
+            zone_intersect_ua=gpd.overlay(self.geom, urbanized, how='intersection')
+            urbanized_geoids=zone_intersect_ua['copy_GEOID'].unique()
+            if not os.path.isdir(save_loc):
+                print('Creating directory for state {}'.format(self.state_fips))
+                os.mkdir(save_loc)
+            json.dump(urbanized_geoids.tolist(), open(save_address, 'w'))
+        self.geom = self.geom.loc[urbanized_geoids]
+
+    def add_lodes_cols_to_shape(self):
+        rac_column_name_map={'C000': 'total_pop_rac',
+        					'CE01': 'res_income_u1250_rac',
+        					'CE02': 'res_income_1251-3333_rac',
+        					'CE03': 'res_income_3333+_rac',
+                             'CA01': 'res_age_u29_rac',
+                             'CA02': 'res_age_30-54_rac',
+                             'CA03': 'res_age_55+_rac',
+                             'CD01': 'res_edu_no_highsch',
+                             'CD02': 'res_edu_highsch',
+                             'CD03': 'res_edu_some_college',
+                             'CD04': 'res_edu_bach_or_higher'}
+        wac_column_name_map={'C000': 'total_employ_wac',
+                			'CE01': 'emp_income_u1250_wac',
+        					'CE02': 'emp_income_1251-3333_wac',
+        					'CE03': 'emp_income_3333+_wac',
+                             'CA01': 'emp_age_u29_wac',
+                             'CA02': 'emp_age_30-54_wac',
+                             'CA03': 'emp_age_55+_wac',
+                             'CD01': 'emp_edu_no_highsch',
+                             'CD02': 'emp_edu_highsch',
+                             'CD03': 'emp_edu_some_college',
+                             'CD04': 'emp_edu_bach_or_higher',
+                             'CNS01': 'emp_naics_11',
+                             'CNS02': 'emp_naics_21',
+                             'CNS03': 'emp_naics_22',
+                             'CNS04': 'emp_naics_23',
+                             'CNS05': 'emp_naics_31-33',
+                             'CNS06': 'emp_naics_42',
+                             'CNS07': 'emp_naics_44-45',
+                             'CNS08': 'emp_naics_48-49',
+                             'CNS09': 'emp_naics_51',
+                             'CNS10': 'emp_naics_52',
+                             'CNS11': 'emp_naics_53',
+                             'CNS12': 'emp_naics_54',
+                             'CNS13': 'emp_naics_55',
+                             'CNS14': 'emp_naics_56',
+                             'CNS15': 'emp_naics_61',
+                             'CNS16': 'emp_naics_62',
+                             'CNS17': 'emp_naics_71',
+                             'CNS18': 'emp_naics_72',
+                             'CNS19': 'emp_naics_81',
+                             'CNS20': 'emp_naics_92',
+                             # 'CFS01': 'emp_prv_firm_size_u19',
+                             # 'CFS02': 'emp_prv_firm_size_20-49',
+                             # 'CFS03': 'emp_prv_firm_size_50-249',
+                             # 'CFS04': 'emp_prv_firm_size_250-499',
+                             # 'CFS05': 'emp_prv_firm_size_500+',
+                             # 'CFA01': 'emp_prv_firm_age_0-1',
+                             # 'CFA02': 'emp_prv_firm_age_2-3',
+                             # 'CFA03': 'emp_prv_firm_age_4-5',
+                             # 'CFA04': 'emp_prv_firm_age_6-10',
+                             # 'CFA05': 'emp_prv_firm_age_11+'
+                             }
+        self.geom=self.geom.merge(self.rac[rac_column_name_map.keys()],how='left',
+            left_index=True, right_index=True).rename(columns=rac_column_name_map)
+        self.geom=self.geom.merge(self.wac[wac_column_name_map.keys()],how='left',
+            left_index=True, right_index=True).rename(columns=wac_column_name_map)
             
     def lodes_to_pop_table(self, model_subset_name=None, sim_subset_name=None):
         """
