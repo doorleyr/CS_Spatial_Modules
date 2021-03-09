@@ -717,7 +717,7 @@ if __name__ == "__main__":
 
 	st=OpenCity.US_State(state_fips, year=2018, geom_type=geom_type)
 	st.get_geometry()
-	st.remove_non_urban_zones()
+	# st.remove_non_urban_zones()
 	st.get_lodes_data( include=['wac', 'rac'])
 	st.add_lodes_cols_to_shape()
 
