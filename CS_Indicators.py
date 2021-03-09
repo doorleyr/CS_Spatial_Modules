@@ -214,7 +214,7 @@ class Proximity_Indicator(Indicator):
     
     def get_graph_reference_area(self):
         self.state.subset_geom_by_distance(centre_x_y=[self.geogrid.x_centroid.mean(), self.geogrid.y_centroid.mean()], 
-                                           radius=2500, name='reference')
+                                           radius=5000, name='reference')
         reference_zones=self.state.return_geometry(subset_name='reference')
         print('Downloading graph for reference area')
         reference_zone_graph=self.get_network_around_geom_buffered(reference_zones)
