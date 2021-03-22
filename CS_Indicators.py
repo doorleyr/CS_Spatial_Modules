@@ -111,32 +111,24 @@ def pop_one_cell(cell, side_length, type_def):
     
         
 
-def aggregate_attributes_over_grid(geogrid_data, attribute, side_length, type_def, digits=None):
+def aggregate_attributes_over_grid(agg_types, attribute, side_length, type_def, digits=None):
     # TODO: eliminate repetition with previous function
     cell_area=side_length*side_length
     aggregated={}
-    for cell in geogrid_data:
-        name=cell['name']
-        type_info=type_def[name]
+    for cell_type in agg_types:
+        type_info=type_def[cell_type]
         if type_info[attribute] is not None:
-            height=cell['height']
-            if isinstance(height, list):
-                height=height[-1]
-            if 'sqm_pperson' in type_info:
-                sqm_pperson=type_info['sqm_pperson']
-            else:
-                sqm_pperson=50
-            total_capacity=height*cell_area/sqm_pperson
+            total_capacity=agg_types[cell_type]
             for code in type_info[attribute]:
                 if digits==None:
                     code_digits=code
                 else:
                     code_digits=code[0:digits]
-                add_capacity=total_capacity*type_info[attribute][code]
+                attr_capacity=total_capacity*type_info[attribute][code]
                 if code_digits in aggregated:
-                    aggregated[code_digits]+= add_capacity
+                    aggregated[code_digits]+= attr_capacity
                 else:
-                    aggregated[code_digits]= add_capacity
+                    aggregated[code_digits]= attr_capacity
     return aggregated
 
 def get_central_nodes(geodf, G):
@@ -156,12 +148,13 @@ def get_central_nodes(geodf, G):
 
 
 class Proximity_Indicator(Indicator):
-    def load(self, state, table_name, buffer=1200):
+    def setup(self, state, table_name, buffer=1200):
         self.zone_to_node_tolerance=500
-        self.grid_to_node_tolerance=300
+        self.grid_to_node_tolerance=100
         self.table_name=table_name
         self.buffer=buffer
         self.state=state
+        self.indicator_type = 'hybrid'
         self.get_geogrid()
         self.get_overlap_geoids()
 #         self.G=self.get_network_around_geom_buffered(self.geogrid)
@@ -214,7 +207,7 @@ class Proximity_Indicator(Indicator):
     
     def get_graph_reference_area(self):
         self.state.subset_geom_by_distance(centre_x_y=[self.geogrid.x_centroid.mean(), self.geogrid.y_centroid.mean()], 
-                                           radius=5000, name='reference')
+                                           radius=2500, name='reference')
         reference_zones=self.state.return_geometry(subset_name='reference')
         print('Downloading graph for reference area')
         reference_zone_graph=self.get_network_around_geom_buffered(reference_zones)
@@ -279,11 +272,11 @@ class Proximity_Indicator(Indicator):
         reachable_area_stats=dict(self.state.geom.loc[zones, stats_to_aggregate].sum())
         if geogrid_data is not None:
             geogrid_data_reachable=[geogrid_data[c] for c in cells]
-            side_length=self.get_table_properties()['cellSize']
+            side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
             type_def=geogrid_data.get_type_info()
             agg_types=aggregate_types_over_grid(geogrid_data_reachable, side_length=side_length, type_def=type_def)
-            agg_naics=aggregate_attributes_over_grid(geogrid_data_reachable, 'NAICS', side_length=side_length, type_def=type_def, digits=2)
-            agg_lbcs=aggregate_attributes_over_grid(geogrid_data_reachable, 'LBCS', side_length=side_length, type_def=type_def, digits=1)
+            agg_naics=aggregate_attributes_over_grid(agg_types, 'NAICS', side_length=side_length, type_def=type_def, digits=2)
+            agg_lbcs=aggregate_attributes_over_grid(agg_types, 'LBCS', side_length=side_length, type_def=type_def, digits=1)
             
             # update total residential and total employment
             add_emp=sum(agg_naics.values())
@@ -320,7 +313,7 @@ class Proximity_Indicator(Indicator):
             reachable_area_stats['GEOID']=ind
             zone_reachable_area_stats.append(reachable_area_stats)
         if geogrid_data is not None:
-            side_length=self.get_table_properties()['cellSize']
+            side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
             type_def=geogrid_data.get_type_info()
             for i_c, cell in enumerate(geogrid_data):
                 reachable_area_stats=self.aggregate_reachable_attributes_one_source(
@@ -389,15 +382,15 @@ class Proximity_Indicator(Indicator):
         end_ind_calc=datetime.datetime.now()
         
         heatmap=self.compute_heatmaps(grid_site_stats)
-        post_url='https://cityio.media.mit.edu/api/table/update/'+self.table_name       
-        r = requests.post(post_url+'/access', data = json.dumps(heatmap))
-        print('Post heatmap: {}'.format(r))
+        # post_url='https://cityio.media.mit.edu/api/table/update/'+self.table_name       
+        # r = requests.post(post_url+'/access', data = json.dumps(heatmap))
+        # print('Post heatmap: {}'.format(r))
         end_hm_calc=datetime.datetime.now()
         
         print('Prox Ind: {}'.format(end_ind_calc-start_ind_calc))
         print('Prox HM: {}'.format(end_hm_calc-end_ind_calc))
         
-        return outputs
+        return {'heatmap':heatmap,'numeric':outputs}
       
     def get_network_around_geom_buffered(self, geom):
         """
@@ -412,7 +405,7 @@ class Proximity_Indicator(Indicator):
         return osmnx.graph.graph_from_polygon(geom_wgs_buffered_gdf.iloc[0]['geometry'], network_type='walk')
 
 class Density_Indicator(Indicator):
-    def load(self, state, table_name_x):
+    def setup(self, state, table_name_x):
         self.state=state
         self.table_name_x=table_name_x
 #         self.requires_geometry=True
@@ -478,11 +471,11 @@ class Density_Indicator(Indicator):
         temp_site_stats=dict(self.state.geom.loc[self.overlapping_geoids, 
                                                  stats_to_aggregate].sum())
         if geogrid_data is not None:
-            side_length=self.get_table_properties()['cellSize']
+            side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
             type_def=geogrid_data.get_type_info()
             agg_types=aggregate_types_over_grid(geogrid_data, side_length=side_length, type_def=type_def)
-            agg_naics=aggregate_attributes_over_grid(geogrid_data, 'NAICS', side_length=side_length, type_def=type_def, digits=2)
-            agg_lbcs=aggregate_attributes_over_grid(geogrid_data, 'LBCS', side_length=side_length, type_def=type_def, digits=1)
+            agg_naics=aggregate_attributes_over_grid(agg_types, 'NAICS', side_length=side_length, type_def=type_def, digits=2)
+            agg_lbcs=aggregate_attributes_over_grid(agg_types, 'LBCS', side_length=side_length, type_def=type_def, digits=1)
             
             # update total residential and total employment
             add_emp=sum(agg_naics.values())
@@ -706,35 +699,32 @@ class Mobility_indicator(Indicator):
         r = requests.post(post_url+'/ABM2', data = json.dumps(deckgl_trips))
         print('Post ABM: {}'.format(r))
 
+
+
+
 if __name__ == "__main__":
-	table_name=sys.argv[1]
-	if len(sys.argv)>2:
-		geom_type=sys.argv[2]
-	else:
-		geom_type='block_group'
-	properties=init_geogrid(table_name)
-	state_fips=identify_state(properties)
+    table_name=sys.argv[1]
+    if len(sys.argv)>2:
+        geom_type=sys.argv[2]
+    else:
+        geom_type='block_group'
+    properties=init_geogrid(table_name)
+    state_fips=identify_state(properties)
 
-	st=OpenCity.US_State(state_fips, year=2018, geom_type=geom_type)
-	st.get_geometry()
+    st=OpenCity.US_State(state_fips, year=2018, geom_type=geom_type)
+    st.get_geometry()
 	# st.remove_non_urban_zones()
-	st.get_lodes_data( include=['wac', 'rac'])
-	st.add_lodes_cols_to_shape()
+    st.get_lodes_data( include=['wac', 'rac'])
+    st.add_lodes_cols_to_shape()
 
 
-	H=Handler(table_name=table_name)
-	print(H.table_name)
+    H=Handler(table_name=table_name)
+    print(H.table_name)
 
-	d=Density_Indicator()
-	d.link_table(table_name=table_name)
+    d=Density_Indicator(state=st, table_name_x=table_name)
+    p=Proximity_Indicator(state=st, table_name=table_name)
 
-	p=Proximity_Indicator()
-	p.link_table(table_name=table_name)
+    H.add_indicator(d)
+    H.add_indicator(p)
 
-	H.add_indicator(d)
-	H.add_indicator(p)
-
-	d.load(state=st, table_name_x=table_name)
-	p.load(state=st, table_name=table_name)
-
-	H.listen()
+    H.listen()
