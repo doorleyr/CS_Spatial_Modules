@@ -25,32 +25,39 @@ separate out functions for combining grid stats with zone stats- repeated in bot
 only consider interactive cells in updates
 """
 
-def init_geogrid(table_name):
+def init_geogrid(table_name, interactive_zone=None):
     """
     initialises the available types on the front-end to a default list from text file
     initialises the GEOGRIDDATA to all "None"
     """
+
     get_url='https://cityio.media.mit.edu/api/table/'+table_name
     post_url='https://cityio.media.mit.edu/api/table/update/'+table_name
     with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-        geogrid=json.loads(url.read().decode())  
+        geogrid=json.loads(url.read().decode()) 
     default_types=json.load(open('data/default_types.json'))
     geogrid['properties']['types']=default_types
 
-    geogrid_data=[{
-                    "color": [0,0,0,0],
-                    "height": [0],
-                    "id": i,
-                    "interactive": "Web",
-                    "name": "None",
-                    "tui_id": None
-                    } for i in range(len(geogrid['features']))]
+    if interactive_zone is not None:
+        with urllib.request.urlopen(get_url+'/GEOGRID') as url:
+            geogrid_gpd=gpd.read_file(url.read().decode())
+        geogrid_intersect_interactive=gpd.overlay(geogrid_gpd, interactive_zone)
+        intersect_ids=geogrid_intersect_interactive['id'].values
+    else:
+        intersect_ids=list(range(len(geogrid['features'])))
 
+    for i in range(len(geogrid['features'])):
+        geogrid['features'][i]['properties']['name']='None'
+        geogrid['features'][i]['properties']['height']=[0]
+        if i in intersect_ids:
+            geogrid['features'][i]['properties']['interactive']='Web'
+            geogrid['features'][i]['properties']['color']=[50,50,50,50]
+        else:
+            geogrid['features'][i]['properties']['interactive']=False
+            geogrid['features'][i]['properties']['color']=[0,0,0,0]
+            
     r = requests.post(post_url+'/GEOGRID', data = json.dumps(geogrid))
     print('Initialise GEOGRID: {}'.format(r))
-
-    r = requests.post(post_url+'/GEOGRIDDATA', data = json.dumps(geogrid_data))
-    print('Initialise GEOGRIDDATA: {}'.format(r))
     return geogrid['properties']
     
 def identify_state(properties):
@@ -189,7 +196,7 @@ class Proximity_Indicator(Indicator):
         find the geoids of the baseline zones which overlap with hthe geogrid
         
         """
-        self.state.geom['copy_GEOID']=self.state.geom.index
+        self.state.geom['copy_GEOID']=self.state.geom.index.copy()
         grid_intersect_zones=gpd.overlay(self.geogrid, self.state.geom, 'intersection')
         self.overlapping_geoids=grid_intersect_zones['copy_GEOID'].unique()
             
@@ -456,7 +463,7 @@ class Density_Indicator(Indicator):
         with urllib.request.urlopen(get_url+'/GEOGRID') as url:
             geogrid=gpd.read_file(url.read().decode())
 
-        self.state.geom['copy_GEOID']=self.state.geom.index
+        self.state.geom['copy_GEOID']=self.state.geom.index.copy()
         grid_intersect_zones=gpd.overlay(geogrid, self.state.geom, 'intersection')
         self.overlapping_geoids=grid_intersect_zones['copy_GEOID'].unique()
         

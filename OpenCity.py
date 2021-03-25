@@ -186,7 +186,7 @@ class US_State():
             ua_state=ua.loc[ua['NAMELSAD10'].str.contains(' {}'.format(self.state.abbr))]
             urbanized=ua_state.loc[ua_state['UATYP10']=='U']
             urbanized = urbanized.to_crs("EPSG:4326")
-            self.geom['copy_GEOID']=self.geom.index
+            self.geom['copy_GEOID']=self.geom.index.copy()
 
             zone_intersect_ua=gpd.overlay(self.geom, urbanized, how='intersection')
             urbanized_geoids=zone_intersect_ua['copy_GEOID'].unique()
@@ -338,6 +338,9 @@ class PdnaNetwork():
             columns={'x': 'b_node_x', 'y': 'b_node_y'})
         self.attr_lookup=edges_df.to_dict(orient='index')
 
+    def get_nodes_df(self):
+        return self.net.nodes_df
+
     def get_node_ids(self, x_col,y_col):
         return self.net.get_node_ids(x_col,y_col)
 
@@ -436,7 +439,9 @@ class Simulation():
         self.sim_geoids=sim_geoids
         # self.centre_x_y=centre_x_y
         # self.vis_radius=vis_radius
+        self.get_internal_node_tables()
         self.get_close_node_table()
+        self.assign_nodes_to_zones()
         if person_attributes==None:
             person_attributes=[col for col in sim_pop.columns if col not in [
                         'home_geoid', 'work_geoid']]
@@ -451,16 +456,16 @@ class Simulation():
     #         self.vis_nodes[net]=[ind for ind, row in self.mob_sys.networks[net].net.nodes_df.iterrows(
     #         ) if get_haversine_distance([row['x'], row['y']], self.centre_x_y)<self.vis_radius]
   
-    def get_simpop_subset(self, sim_pop, sample_N=None, sim_geoids=None):
+    def get_simpop_subset(self, sim_pop, sample_N=None):
         """
         People who live OR work in one of the sim_geoids will be included
 
         """
 
         sim_pop=sim_pop.reset_index(drop=True)
-        if sim_geoids is not None:
-            sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(sim_geoids))|
-                          (sim_pop['work_geoid'].isin(sim_geoids)))]
+        if self.sim_geoids is not None:
+            sim_pop=sim_pop.loc[((sim_pop['home_geoid'].isin(self.sim_geoids))|
+                          (sim_pop['work_geoid'].isin(self.sim_geoids)))]
         if sample_N is not None:
             if len(sim_pop)>sample_N:
                 sim_pop=sim_pop.sample(n=sample_N)
@@ -488,8 +493,31 @@ class Simulation():
             close_nodes['node_'+net]=self.mob_sys.networks[net].get_node_ids(
                 x_col=self.zones['x_centroid'],y_col=self.zones['y_centroid'])            
         self.close_nodes_df=pd.DataFrame(index=self.zones.index, data=close_nodes)
-        
-        
+
+    def get_internal_node_tables(self):
+        print('Getting internal nodes')
+        self.zones['copy_GEOID']=self.zones.index.copy()
+        self.internal_nodes={}
+        for net in self.mob_sys.networks:
+            nodes_df=self.mob_sys.networks[net].get_nodes_df()
+            nodes_geodf=gpd.GeoDataFrame(nodes_df,
+                                        geometry=gpd.points_from_xy(nodes_df.x, nodes_df.y),
+                                        crs="EPSG:4326")
+            nodes_geodf['node_id']=nodes_geodf.index
+            
+            zones_intersect_nodes=gpd.overlay(self.zones,nodes_geodf, 'intersection', keep_geom_type=False)
+            nodes_by_geoid=zones_intersect_nodes.groupby('copy_GEOID').agg({'node_id': lambda nodes: [n for n in nodes]})
+            self.internal_nodes[net]=nodes_by_geoid
+
+    def assign_nodes_to_zones(self):
+        self.zones=self.zones.join(self.close_nodes_df)
+        for net in self.mob_sys.networks:
+            self.zones=self.zones.join(self.internal_nodes[net]).rename(columns={'node_id': 'nodes_internal_{}'.format(net)})
+            self.zones['possible_nodes_{}'.format(net)]=self.zones.apply(
+                    lambda row: row['nodes_internal_{}'.format(net)] if isinstance(row['nodes_internal_{}'.format(net)], list
+                        ) else [row['node_{}'.format(net)]], axis=1)
+
+  
     def default_scheduler(self, sim_pop_row):
         """
         gives everyone a schedule of [home, work, other, work, home]
@@ -544,6 +572,28 @@ class Simulation():
         print("Chhosing locations for each activity")
         sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
         return sim_pop
+
+    def create_simple_activity_schedules(self, simpop_df):
+        simpop_df['activities']=[['H', 'W', 'O', 'W', 'H']]*len(simpop_df)
+        durations_list=[8,4,0.5,4]
+        durations_det=np.array([durations_list]*len(simpop_df))
+        durations_rand=-0.25+0.5*np.random.rand(durations_det.shape[0], durations_det.shape[1])# between -0.25 and 0.25
+        durations_rand_scaled=np.multiply(durations_rand,durations_list)
+        durations_total=durations_det+durations_rand_scaled
+
+        start_times=(3600*np.column_stack((np.zeros((len(simpop_df),1)), np.cumsum(durations_total, axis=1)))).astype(int)
+        simpop_df['start_times']=[list(start_times[s,:]) for s in range(len(simpop_df))]
+
+        sim_zones=self.zones.loc[self.sim_geoids]
+        simpop_df['other_place']=sim_zones.sample(len(simpop_df), weights='emp_naics_72',replace=True).index
+
+        simpop_df['locations']=simpop_df.apply(lambda row: [row['home_geoid'],
+                                                        row['work_geoid'],
+                                                        row['other_place'],
+                                                        row['work_geoid'],
+                                                        row['home_geoid']], axis=1)
+        return simpop_df
+
         
     def create_trip_table(self, sim_pop):
         """
@@ -568,10 +618,15 @@ class Simulation():
                 all_trips.append(trip)
         all_trips_df=pd.DataFrame(all_trips)
         all_trips_df=self.mode_chooser(all_trips_df)
-        all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='from_zone').rename(columns={
-                'node_'+net: 'from_node_'+net for net in self.mob_sys.networks})
-        all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='to_zone').rename(columns={
-                'node_'+net: 'to_node_'+net for net in self.mob_sys.networks})
+        columns_to_join=[col for col in self.zones if 'possible' in col]
+        # all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='from_zone').rename(columns={
+        #         'node_'+net: 'from_node_'+net for net in self.mob_sys.networks})
+        # all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='to_zone').rename(columns={
+        #         'node_'+net: 'to_node_'+net for net in self.mob_sys.networks})
+        all_trips_df=all_trips_df.join(self.zones[columns_to_join], how='left', on='from_zone').rename(columns={
+            'possible_nodes_'+net: 'from_possible_nodes_'+net for net in self.mob_sys.networks})
+        all_trips_df=all_trips_df.join(self.zones[columns_to_join], how='left', on='to_zone').rename(columns={
+            'possible_nodes_'+net: 'to_possible_nodes_'+net for net in self.mob_sys.networks})
         return all_trips_df
     
     # TODO: if I'm ultimately always using the traversal tables (rather than route_table)
@@ -586,13 +641,13 @@ class Simulation():
         route_table=pd.DataFrame()
         for mode_id in self.mob_sys.modes:
             target_network_id=self.mob_sys.modes[mode_id].target_network_id
-            route_table_this_mode=all_trips_df.loc[((all_trips_df['mode']==mode_id)&
-                                          (~all_trips_df['from_node_'+target_network_id].isnull())&
-                                          (~all_trips_df['to_node_'+target_network_id].isnull()))]
+            route_table_this_mode=all_trips_df.loc[(all_trips_df['mode']==mode_id)]
+            sampled_from_nodes=route_table_this_mode.apply(lambda row: random.choice(row['from_possible_nodes_'+target_network_id]), axis=1)
+            sampled_to_nodes=route_table_this_mode.apply(lambda row: random.choice(row['to_possible_nodes_'+target_network_id]), axis=1)
             routes=self.mob_sys.get_many_routes(
                 mode_id, 
-                list(route_table_this_mode['from_node_'+target_network_id].values),
-                list(route_table_this_mode['to_node_'+ target_network_id].values), 
+                sampled_from_nodes.values,
+                sampled_to_nodes.values, 
                 include_attributes=True)
             route_table_this_mode['node_path']=routes['node_path']
             route_table_this_mode['attributes']=routes['attributes']

@@ -1,4 +1,5 @@
 import osmnx
+import pandas as pd
 
 def simplify_network(G, tolerance=10):
     Gp=osmnx.projection.project_graph(G)
@@ -45,6 +46,11 @@ class PreCompOSMNet():
         
     def get_node_ids(self, x_col, y_col):
         return osmnx.distance.get_nearest_nodes(self.G, x_col, y_col, method='kdtree')
+
+    def get_nodes_df(self):
+        return pd.DataFrame(data=[{'x': self.G.nodes[n]["x"], 
+                    'y': self.G.nodes[n]["y"], 
+                    'id': n} for n in self.G.nodes]).set_index('id')
 
     def get_path_link_attributes(self, path):
         # https://github.com/gboeing/osmnx/blob/master/osmnx/plot.py for actual edge geometries
