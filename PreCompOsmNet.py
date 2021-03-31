@@ -13,12 +13,15 @@ def simplify_network(G, tolerance=10):
     G_simp_wgs=osmnx.projection.project_graph(G_simp, to_crs='epsg:4326')
     return G_simp_wgs
 
-def pre_compute_paths(G):
+def pre_compute_paths(G, weight_metric='travel_time', save_route_costs=False):
     print('\t Pre-computing paths')
     fw_pred, fw_dist=osmnx.graph.nx.floyd_warshall_predecessor_and_distance(
-        G, weight='travel_time')
-    return fw_pred
-  
+        G, weight=weight_metric)
+    if save_route_costs:
+    	return fw_pred, fw_dist
+    else:
+    	return fw_pred
+ 
 
 class PreCompOSMNet():
     def __init__(self, G, pred):
@@ -31,11 +34,13 @@ class PreCompOSMNet():
         self.G=G
         self.predecessors=pred
         
-    def pre_compute_paths(self):
-        print('\t Pre-computing paths')
-        fw_pred, fw_dist=osmnx.graph.nx.floyd_warshall_predecessor_and_distance(
-            self.G, weight='travel_time')
-        self.predecessors=fw_pred
+    # def pre_compute_paths(self, save_travel_time=False):
+    #     print('\t Pre-computing paths')
+    #     fw_pred, fw_dist=osmnx.graph.nx.floyd_warshall_predecessor_and_distance(
+    #         self.G, weight='travel_time')
+    #     self.predecessors=fw_pred
+    #     if save_dist:
+    #     	self.travel_times=fw_dist
         
     def shortest_paths(self, nodes_a, nodes_b, imp_name=None):
         paths=[]
@@ -52,9 +57,8 @@ class PreCompOSMNet():
                     'y': self.G.nodes[n]["y"], 
                     'id': n} for n in self.G.nodes]).set_index('id')
 
-    def get_path_link_attributes(self, path):
+    def get_path_link_attributes(self, path, attribute_names=['travel_time']):
         # https://github.com/gboeing/osmnx/blob/master/osmnx/plot.py for actual edge geometries
-        attribute_names=['travel_time']
         output={attr: [] for attr in attribute_names}
         if len(path)>1:
             coordinates=[]

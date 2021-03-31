@@ -285,9 +285,9 @@ class US_State():
                 print('{} of {}'.format(count, len(od_subset_probs)))
             count+=1
             n=row['S000']
-            age_samples=np.random.choice(a=['u30','30to54','55plus'], size=n, 
+            age_samples=np.random.choice(a=['u29','30to54','55+'], size=n, 
                                          p=row[['prob_SA01','prob_SA02','prob_SA03']])
-            earn_samples=np.random.choice(a=['u1250','1250to3333','3333plus'], size=n, 
+            earn_samples=np.random.choice(a=['u1250','1251-3333','3333+'], size=n, 
                                           p=row[['prob_SE01','prob_SE02','prob_SE03']])
             indust_samples=np.random.choice(a=['goods_prod','trade_trans_util','other'], 
                                             size=n, p=row[['prob_SI01','prob_SI02','prob_SI03']])
@@ -347,8 +347,8 @@ class PdnaNetwork():
     def shortest_paths(self, nodes_a, nodes_b, imp_name):
         return self.net.shortest_paths(nodes_a, nodes_b, imp_name)
 
-    def get_path_link_attributes(self, path):
-        attribute_names=self.net.impedance_names
+    def get_path_link_attributes(self, path, attribute_names):
+        # attribute_names=self.net.impedance_names
         output={attr: [] for attr in attribute_names}
         if len(path)>1:
             coordinates=[]
@@ -398,7 +398,8 @@ class MobilitySystem():
         node_paths= self.networks[target_network_id].shortest_paths(
                 nodes_a, nodes_b, imp_name=travel_time_metric)
         if include_attributes==True:
-            attributes=[self.networks[target_network_id].get_path_link_attributes(np) for np in node_paths]
+            attribute_names=[travel_time_metric]
+            attributes=[self.networks[target_network_id].get_path_link_attributes(np, attribute_names=attribute_names) for np in node_paths]
             return {'node_path': node_paths, 'attributes': attributes}
         else:
             return node_paths           
@@ -430,8 +431,8 @@ class Mode():
 
 class Simulation():
     def __init__(self, sim_pop, mob_sys, zones,  sim_geoids=None, person_attributes=None):
-        self.scheduler=self.default_scheduler
-        self.location_chooser=self.default_location_chooser
+        # self.scheduler=self.default_scheduler
+        # self.location_chooser=self.default_location_chooser
         self.mode_chooser=self.default_mode_chooser
         self.check_zones(sim_pop, zones)           
         self.mob_sys=mob_sys
@@ -442,6 +443,8 @@ class Simulation():
         self.get_internal_node_tables()
         self.get_close_node_table()
         self.assign_nodes_to_zones()
+        # if needs_dist_mat:
+        #     self.create_zone_dist_mat()
         if person_attributes==None:
             person_attributes=[col for col in sim_pop.columns if col not in [
                         'home_geoid', 'work_geoid']]
@@ -518,17 +521,17 @@ class Simulation():
                         ) else [row['node_{}'.format(net)]], axis=1)
 
   
-    def default_scheduler(self, sim_pop_row):
-        """
-        gives everyone a schedule of [home, work, other, work, home]
-        """
-        sim_pop_row['activities']=['H', 'W', 'O','W','H']
-        durations_hrs= [6+4*random.random(), # starts work between 6am and 1pm
-                   3+2*random.random(), # works for 3-5 hours
-                   0.5+1*random.random(), # break between 0.5 and 1.5 hours
-                   3+2*random.random()] # works for 3-5 hours
-        sim_pop_row['start_times']=[0] + list(3600*np.cumsum(durations_hrs))
-        return sim_pop_row
+    # def default_scheduler(self, sim_pop_row):
+    #     """
+    #     gives everyone a schedule of [home, work, other, work, home]
+    #     """
+    #     sim_pop_row['activities']=['H', 'W', 'O','W','H']
+    #     durations_hrs= [6+4*random.random(), # starts work between 6am and 1pm
+    #                3+2*random.random(), # works for 3-5 hours
+    #                0.5+1*random.random(), # break between 0.5 and 1.5 hours
+    #                3+2*random.random()] # works for 3-5 hours
+    #     sim_pop_row['start_times']=[0] + list(3600*np.cumsum(durations_hrs))
+    #     return sim_pop_row
     
     def default_mode_chooser(self, all_trips_df):
         """
@@ -540,20 +543,20 @@ class Simulation():
         
         return all_trips_df
     
-    def default_location_chooser(self, sim_pop_row, zones):
-        locations=[]
-        for activity in sim_pop_row['activities']:
-            if activity=='H':
-                locations.append(sim_pop_row['home_geoid'])
-            elif activity=='W':
-                locations.append(sim_pop_row['work_geoid'])
-            else:
-                if self.sim_geoids is None:
-                    locations.append(random.choice(zones.index))
-                else:
-                    locations.append(random.choice(self.sim_geoids))
-        sim_pop_row['locations']=locations
-        return sim_pop_row
+    # def default_location_chooser(self, sim_pop_row, zones):
+    #     locations=[]
+    #     for activity in sim_pop_row['activities']:
+    #         if activity=='H':
+    #             locations.append(sim_pop_row['home_geoid'])
+    #         elif activity=='W':
+    #             locations.append(sim_pop_row['work_geoid'])
+    #         else:
+    #             if self.sim_geoids is None:
+    #                 locations.append(random.choice(zones.index))
+    #             else:
+    #                 locations.append(random.choice(self.sim_geoids))
+    #     sim_pop_row['locations']=locations
+    #     return sim_pop_row
         
     def set_choice_models(self, scheduler=None, location_chooser=None, mode_chooser=None):
         """
@@ -566,14 +569,31 @@ class Simulation():
         if mode_chooser is not None:
             self.mode_chooser=mode_chooser
             
-    def create_activity_schedules(self, sim_pop):
-        print("Scheduling activities")
-        sim_pop=sim_pop.apply(lambda row: self.scheduler(row), axis=1)
-        print("Chhosing locations for each activity")
-        sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
-        return sim_pop
+    # def create_activity_schedules(self, sim_pop):
+    #     print("Scheduling activities")
+    #     sim_pop=sim_pop.apply(lambda row: self.scheduler(row), axis=1)
+    #     print("Choosing locations for each activity")
+    #     sim_pop=sim_pop.apply(lambda row: self.location_chooser(row, self.zones), axis=1)
+    #     return sim_pop
 
-    def create_simple_activity_schedules(self, simpop_df):
+
+    def create_simple_HWH_schedules(self, simpop_df):
+        simpop_df['activities']=[['H', 'W', 'H']]*len(simpop_df)
+        durations_list=[8,9]
+        durations_det=np.array([durations_list]*len(simpop_df))
+        durations_rand=-0.25+0.5*np.random.rand(durations_det.shape[0], durations_det.shape[1])# between -0.25 and 0.25
+        durations_rand_scaled=np.multiply(durations_rand,durations_list)
+        durations_total=durations_det+durations_rand_scaled
+
+        start_times=(3600*np.column_stack((np.zeros((len(simpop_df),1)), np.cumsum(durations_total, axis=1)))).astype(int)
+        simpop_df['start_times']=[list(start_times[s,:]) for s in range(len(simpop_df))]
+
+        simpop_df['locations']=simpop_df.apply(lambda row: [row['home_geoid'],
+                                                        row['work_geoid'],
+                                                        row['home_geoid']], axis=1)
+        return simpop_df
+
+    def create_simple_HWOWH_schedules(self, simpop_df):
         simpop_df['activities']=[['H', 'W', 'O', 'W', 'H']]*len(simpop_df)
         durations_list=[8,4,0.5,4]
         durations_det=np.array([durations_list]*len(simpop_df))
@@ -594,7 +614,6 @@ class Simulation():
                                                         row['home_geoid']], axis=1)
         return simpop_df
 
-        
     def create_trip_table(self, sim_pop):
         """
         For every person who passes through the simulation area:
@@ -617,7 +636,6 @@ class Simulation():
                     trip[attr]=row[attr]
                 all_trips.append(trip)
         all_trips_df=pd.DataFrame(all_trips)
-        all_trips_df=self.mode_chooser(all_trips_df)
         columns_to_join=[col for col in self.zones if 'possible' in col]
         # all_trips_df=all_trips_df.join(self.close_nodes_df, how='left', on='from_zone').rename(columns={
         #         'node_'+net: 'from_node_'+net for net in self.mob_sys.networks})
@@ -627,6 +645,7 @@ class Simulation():
             'possible_nodes_'+net: 'from_possible_nodes_'+net for net in self.mob_sys.networks})
         all_trips_df=all_trips_df.join(self.zones[columns_to_join], how='left', on='to_zone').rename(columns={
             'possible_nodes_'+net: 'to_possible_nodes_'+net for net in self.mob_sys.networks})
+        all_trips_df=self.mode_chooser(all_trips_df)
         return all_trips_df
     
     # TODO: if I'm ultimately always using the traversal tables (rather than route_table)
@@ -659,7 +678,8 @@ class Simulation():
         for ind, row in route_table.iterrows():
             coords=row['attributes']['coordinates']
             if len(coords)>1:
-                cum_time=np.cumsum(row['attributes']['travel_time'])
+                travel_time_metric=self.mob_sys.modes[row['mode']].travel_time_metric
+                cum_time=np.cumsum(row['attributes'][travel_time_metric])
                 start_time=int(row['start_time'])
                 timestamps=[int(start_time)] + [int(start_time)+ int(ct) for ct in cum_time]
                 this_trip={'coord_ts': [coords[t]+[timestamps[t]] for t in range(len(timestamps))]}
