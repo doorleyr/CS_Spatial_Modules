@@ -197,24 +197,24 @@ class US_State():
         self.geom = self.geom.loc[urbanized_geoids]
 
     def add_lodes_cols_to_shape(self):
-        rac_column_name_map={'C000': 'total_pop_rac',
-        					'CE01': 'res_income_u1250_rac',
-        					'CE02': 'res_income_1251-3333_rac',
-        					'CE03': 'res_income_3333+_rac',
-                             'CA01': 'res_age_u29_rac',
-                             'CA02': 'res_age_30-54_rac',
-                             'CA03': 'res_age_55+_rac',
+        rac_column_name_map={'C000': 'res_total',
+        					'CE01': 'res_income_low',
+        					'CE02': 'res_income_med',
+        					'CE03': 'res_income_high',
+                             'CA01': 'res_age_low',
+                             'CA02': 'res_age_med',
+                             'CA03': 'res_age_high',
                              'CD01': 'res_edu_no_highsch',
                              'CD02': 'res_edu_highsch',
                              'CD03': 'res_edu_some_college',
                              'CD04': 'res_edu_bach_or_higher'}
-        wac_column_name_map={'C000': 'total_employ_wac',
-                			'CE01': 'emp_income_u1250_wac',
-        					'CE02': 'emp_income_1251-3333_wac',
-        					'CE03': 'emp_income_3333+_wac',
-                             'CA01': 'emp_age_u29_wac',
-                             'CA02': 'emp_age_30-54_wac',
-                             'CA03': 'emp_age_55+_wac',
+        wac_column_name_map={'C000': 'emp_total',
+                			'CE01': 'emp_income_low',
+        					'CE02': 'emp_income_med',
+        					'CE03': 'emp_income_high',
+                             'CA01': 'emp_age_low',
+                             'CA02': 'emp_age_mid',
+                             'CA03': 'emp_age_high',
                              'CD01': 'emp_edu_no_highsch',
                              'CD02': 'emp_edu_highsch',
                              'CD03': 'emp_edu_some_college',
@@ -254,6 +254,7 @@ class US_State():
             left_index=True, right_index=True).rename(columns=rac_column_name_map)
         self.geom=self.geom.merge(self.wac[wac_column_name_map.keys()],how='left',
             left_index=True, right_index=True).rename(columns=wac_column_name_map)
+        self.geom=self.geom.fillna(0)
             
     def lodes_to_pop_table(self, model_subset_name=None, sim_subset_name=None):
         """
@@ -285,9 +286,9 @@ class US_State():
                 print('{} of {}'.format(count, len(od_subset_probs)))
             count+=1
             n=row['S000']
-            age_samples=np.random.choice(a=['u29','30to54','55+'], size=n, 
+            age_samples=np.random.choice(a=['low','mid','high'], size=n, 
                                          p=row[['prob_SA01','prob_SA02','prob_SA03']])
-            earn_samples=np.random.choice(a=['u1250','1251-3333','3333+'], size=n, 
+            earn_samples=np.random.choice(a=['low','mid','high'], size=n, 
                                           p=row[['prob_SE01','prob_SE02','prob_SE03']])
             indust_samples=np.random.choice(a=['goods_prod','trade_trans_util','other'], 
                                             size=n, p=row[['prob_SI01','prob_SI02','prob_SI03']])
@@ -645,7 +646,6 @@ class Simulation():
             'possible_nodes_'+net: 'from_possible_nodes_'+net for net in self.mob_sys.networks})
         all_trips_df=all_trips_df.join(self.zones[columns_to_join], how='left', on='to_zone').rename(columns={
             'possible_nodes_'+net: 'to_possible_nodes_'+net for net in self.mob_sys.networks})
-        all_trips_df=self.mode_chooser(all_trips_df)
         return all_trips_df
     
     # TODO: if I'm ultimately always using the traversal tables (rather than route_table)

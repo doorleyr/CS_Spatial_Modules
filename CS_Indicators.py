@@ -26,55 +26,6 @@ separate out functions for combining grid stats with zone stats- repeated in bot
 only consider interactive cells in updates
 """
 
-def init_geogrid(table_name, interactive_zone=None):
-    """
-    initialises the available types on the front-end to a default list from text file
-    initialises the GEOGRIDDATA to all "None"
-    """
-
-    get_url='https://cityio.media.mit.edu/api/table/'+table_name
-    post_url='https://cityio.media.mit.edu/api/table/update/'+table_name
-    with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-        geogrid=json.loads(url.read().decode()) 
-    default_types=json.load(open('data/default_types.json'))
-    geogrid['properties']['types']=default_types
-
-    if interactive_zone is not None:
-        with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-            geogrid_gpd=gpd.read_file(url.read().decode())
-        geogrid_intersect_interactive=gpd.overlay(geogrid_gpd, interactive_zone)
-        intersect_ids=geogrid_intersect_interactive['id'].values
-    else:
-        intersect_ids=list(range(len(geogrid['features'])))
-
-    for i in range(len(geogrid['features'])):
-        geogrid['features'][i]['properties']['name']='None'
-        geogrid['features'][i]['properties']['height']=[0]
-        if i in intersect_ids:
-            geogrid['features'][i]['properties']['interactive']='Web'
-            geogrid['features'][i]['properties']['color']=[50,50,50,50]
-        else:
-            geogrid['features'][i]['properties']['interactive']=False
-            geogrid['features'][i]['properties']['color']=[0,0,0,0]
-            
-    r = requests.post(post_url+'/GEOGRID', data = json.dumps(geogrid))
-    print('Initialise GEOGRID: {}'.format(r))
-    return geogrid['properties']
-    
-def identify_state(properties):
-    # TODO: if table already existed, just load state from text file
-    print('Downloading state outlines')
-    state_outlines=gpd.read_file(
-        'https://www2.census.gov/geo/tiger/TIGER2019/STATE/tl_2019_us_state.zip')
-    state_outlines=state_outlines.to_crs("EPSG:4326")
-    table_lon, table_lat=properties['header']['longitude'], properties['header']['latitude']
-    table_Point=Point(table_lon, table_lat)
-    for ind, row in state_outlines.iterrows():
-        if row['geometry'].contains(table_Point):
-            return row['GEOID']
-    return None
-
-
 def aggregate_types_over_grid(geogrid_data, side_length, type_def):
     cell_area=side_length*side_length
     aggregated={}  
@@ -156,50 +107,27 @@ def get_central_nodes(geodf, G):
 
 
 class Proximity_Indicator(Indicator):
-    def setup(self, state, table_name, buffer=1200):
+    def setup(self, zones, geogrid, buffer=1200):
         self.zone_to_node_tolerance=500
         self.grid_to_node_tolerance=100
-        self.table_name=table_name
         self.buffer=buffer
-        self.state=state
+        self.zones=zones
         self.indicator_type = 'hybrid'
-        self.get_geogrid()
-        self.get_overlap_geoids()
+        self.geogrid=geogrid
+        self.overlapping_geoids=list(zones.loc[zones['sim_area']].index)
 #         self.G=self.get_network_around_geom_buffered(self.geogrid)
         self.get_graph_reference_area()
     
         print('Getting central nodes')
-        zones_nearest_nodes, zones_nearest_dist= get_central_nodes(self.state.geom, self.ref_G)
-        self.state.geom['central_node']=zones_nearest_nodes
-        self.state.geom['nearest_dist']=zones_nearest_dist
+        zones_nearest_nodes, zones_nearest_dist= get_central_nodes(self.zones, self.ref_G)
+        self.zones['central_node']=zones_nearest_nodes
+        self.zones['nearest_dist']=zones_nearest_dist
         
         grid_nearest_nodes, grid_nearest_dist= get_central_nodes(self.geogrid, self.ref_G)
         self.geogrid['central_node']=grid_nearest_nodes
         self.geogrid['nearest_dist']=grid_nearest_dist
-#         self.state.geom['central_node']=osmnx.get_nearest_nodes(
-#             self.ref_G, self.state.geom['x_centroid'], self.state.geom['y_centroid'], method='balltree')
-#         self.geogrid['central_node']=osmnx.get_nearest_nodes(
-#             self.ref_G, self.geogrid['x_centroid'], self.geogrid['y_centroid'], method='balltree')
         self.calculate_baseline_scores()
         self.get_reachable_geoms_all_interactive()
-        
-        
-    def get_geogrid(self):
-        get_url='https://cityio.media.mit.edu/api/table/'+self.table_name
-        with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-            self.geogrid=gpd.read_file(url.read().decode())
-        centroids=self.geogrid['geometry'].centroid
-        self.geogrid['x_centroid']=[c.x for c in centroids]
-        self.geogrid['y_centroid']=[c.y for c in centroids]
-                       
-    def get_overlap_geoids(self):
-        """
-        find the geoids of the baseline zones which overlap with hthe geogrid
-        
-        """
-        self.state.geom['copy_GEOID']=self.state.geom.index.copy()
-        grid_intersect_zones=gpd.overlay(self.geogrid, self.state.geom, 'intersection')
-        self.overlapping_geoids=grid_intersect_zones['copy_GEOID'].unique()
             
             
     def make_ego_graph_around_geometry(self, zone, tolerance):
@@ -214,9 +142,7 @@ class Proximity_Indicator(Indicator):
         return sub_graph
     
     def get_graph_reference_area(self):
-        self.state.subset_geom_by_distance(centre_x_y=[self.geogrid.x_centroid.mean(), self.geogrid.y_centroid.mean()], 
-                                           radius=2500, name='reference')
-        reference_zones=self.state.return_geometry(subset_name='reference')
+        reference_zones=self.zones.loc[self.zones['reference_area']]
         print('Downloading graph for reference area')
         reference_zone_graph=self.get_network_around_geom_buffered(reference_zones)
         self.ref_G=reference_zone_graph
@@ -227,19 +153,19 @@ class Proximity_Indicator(Indicator):
         self.base_scores={'walkable_{}'.format(x): [] for x in [
             'employment', 'housing', 'healthcare', 'hospitality', 'shopping']}
         self.score_ecdfs={}
-        for ind, row in self.state.geom.loc[self.state.geom['reference']].iterrows():
+        for ind, row in self.zones.loc[self.zones['reference_area']].iterrows():
             # TODO: normalise each score by density at source?
             sub_graph=self.make_ego_graph_around_geometry(row, tolerance=self.zone_to_node_tolerance)
             sub_graph_nodes=sub_graph.nodes(data=False)
-            reachable_zones= list(self.state.geom.loc[
-                ((self.state.geom['central_node'].isin(list(sub_graph_nodes)))&
-                 (self.state.geom['nearest_dist']<self.zone_to_node_tolerance))
+            reachable_zones= list(self.zones.loc[
+                ((self.zones['central_node'].isin(list(sub_graph_nodes)))&
+                 (self.zones['nearest_dist']<self.zone_to_node_tolerance))
                 ].index.values)
-            stats_to_aggregate=['total_pop_rac', 'total_employ_wac']+[
-                col for col in self.state.geom.columns if (('naics' in col) or ('income' in col))]
-            reachable_area_attributes=self.state.geom.loc[reachable_zones][stats_to_aggregate].sum()
-            self.base_scores['walkable_employment'].append(reachable_area_attributes['total_employ_wac'])
-            self.base_scores['walkable_housing'].append(reachable_area_attributes['total_pop_rac'])
+            stats_to_aggregate=[
+                col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
+            reachable_area_attributes=self.zones.loc[reachable_zones][stats_to_aggregate].sum()
+            self.base_scores['walkable_employment'].append(reachable_area_attributes['emp_total'])
+            self.base_scores['walkable_housing'].append(reachable_area_attributes['res_total'])
             self.base_scores['walkable_healthcare'].append(reachable_area_attributes['emp_naics_62'])
             self.base_scores['walkable_hospitality'].append(reachable_area_attributes['emp_naics_72'])
             self.base_scores['walkable_shopping'].append(reachable_area_attributes['emp_naics_44-45'])
@@ -253,9 +179,9 @@ class Proximity_Indicator(Indicator):
         """
         sub_graph=self.make_ego_graph_around_geometry(zone, tolerance)
         sub_graph_nodes=sub_graph.nodes(data=False)
-        reachable_zones= list(self.state.geom.loc[
-                ((self.state.geom['central_node'].isin(list(sub_graph_nodes)))&
-                 (self.state.geom['nearest_dist']<self.zone_to_node_tolerance))
+        reachable_zones= list(self.zones.loc[
+                ((self.zones['central_node'].isin(list(sub_graph_nodes)))&
+                 (self.zones['nearest_dist']<self.zone_to_node_tolerance))
                 ].index.values)
         reachable_grid_cells=list(self.geogrid.loc[
                 ((self.geogrid['central_node'].isin(list(sub_graph_nodes)))&
@@ -271,13 +197,13 @@ class Proximity_Indicator(Indicator):
         self.grid_to_reachable, self.zone_to_reachable={}, {}
         for ind, row in self.geogrid.iterrows():
             self.grid_to_reachable[ind]=self.get_reachable_geoms(row, self.grid_to_node_tolerance)
-        for ind, row in self.state.geom.loc[self.overlapping_geoids].iterrows():
+        for ind, row in self.zones.loc[self.overlapping_geoids].iterrows():
             self.zone_to_reachable[ind]=self.get_reachable_geoms(row, self.zone_to_node_tolerance)
             
     def aggregate_reachable_attributes_one_source(self, zones, cells, geogrid_data=None):
-        stats_to_aggregate=['total_pop_rac', 'total_employ_wac']+[
-                col for col in self.state.geom.columns if (('naics' in col) or ('income' in col))]
-        reachable_area_stats=dict(self.state.geom.loc[zones, stats_to_aggregate].sum())
+        stats_to_aggregate=[
+                col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
+        reachable_area_stats=dict(self.zones.loc[zones, stats_to_aggregate].sum())
         if geogrid_data is not None:
             geogrid_data_reachable=[geogrid_data[c] for c in cells]
             side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
@@ -292,8 +218,8 @@ class Proximity_Indicator(Indicator):
                 add_res=agg_lbcs['1']
             else:
                 add_res=0    
-            reachable_area_stats['total_pop_rac']+=add_res
-            reachable_area_stats['total_employ_wac']+=add_emp
+            reachable_area_stats['res_total']+=add_res
+            reachable_area_stats['emp_total']+=add_emp
             
             # update employment for each NAICS code
             for col in reachable_area_stats:
@@ -304,20 +230,20 @@ class Proximity_Indicator(Indicator):
                             reachable_area_stats[col]+=agg_naics[code]                             
             # update residential types
             if 'Residential Low Income' in agg_types:
-                reachable_area_stats['res_income_u1250_rac']+=agg_types['Residential Low Income']
+                reachable_area_stats['res_income_low']+=agg_types['Residential Low Income']
             if 'Residential Med Income' in agg_types:
-                reachable_area_stats['res_income_1251-3333_rac']+=agg_types['Residential Med Income']
+                reachable_area_stats['res_income_mid']+=agg_types['Residential Med Income']
             if 'Residential High Income' in agg_types:
-                reachable_area_stats['res_income_3333+_rac']+=agg_types['Residential High Income'] 
+                reachable_area_stats['res_income_high']+=agg_types['Residential High Income'] 
         return reachable_area_stats
                 
     def aggregate_reachable_attributes_all_sources(self, geogrid_data=None):
         zone_reachable_area_stats, grid_reachable_area_stats=[], []
-        for ind, row in self.state.geom.loc[self.overlapping_geoids].iterrows():
+        for ind, row in self.zones.loc[self.overlapping_geoids].iterrows():
             reachable_area_stats=self.aggregate_reachable_attributes_one_source(
                 self.zone_to_reachable[ind]['zones'], self.zone_to_reachable[ind]['cells'], geogrid_data)
-            reachable_area_stats['source_pop']=row['total_pop_rac']
-            reachable_area_stats['source_emp']=row['total_employ_wac']
+            reachable_area_stats['source_pop']=row['res_total']
+            reachable_area_stats['source_emp']=row['emp_total']
             reachable_area_stats['GEOID']=ind
             zone_reachable_area_stats.append(reachable_area_stats)
         if geogrid_data is not None:
@@ -342,8 +268,8 @@ class Proximity_Indicator(Indicator):
         for i_c, cell_stats in enumerate(grid_reachable_area_stats):
             features.append({
               "type": "Feature",
-              "properties": [(cell_stats['total_pop_rac']/max_scores['walkable_housing'])**2, 
-                             (cell_stats['total_employ_wac']/max_scores['walkable_employment'])**2,
+              "properties": [(cell_stats['res_total']/max_scores['walkable_housing'])**2, 
+                             (cell_stats['emp_total']/max_scores['walkable_employment'])**2,
                              (cell_stats['emp_naics_62']/max_scores['walkable_healthcare'])**2, 
                              (cell_stats['emp_naics_72']/max_scores['walkable_hospitality'])**2, 
                              (cell_stats['emp_naics_44-45']/max_scores['walkable_shopping'])**2],
@@ -362,8 +288,8 @@ class Proximity_Indicator(Indicator):
         raw_ind={}
         sum_all_source_pop=sum([s['source_pop'] for s in site_stats])
         sum_all_source_emp=sum([s['source_emp'] for s in site_stats])
-        raw_ind['walkable_housing']=sum([s['source_emp']*s['total_pop_rac'] for s in site_stats])/sum_all_source_emp
-        raw_ind['walkable_employment']=sum([s['source_pop']*s['total_employ_wac'] for s in site_stats])/sum_all_source_pop
+        raw_ind['walkable_housing']=sum([s['source_emp']*s['res_total'] for s in site_stats])/sum_all_source_emp
+        raw_ind['walkable_employment']=sum([s['source_pop']*s['emp_total'] for s in site_stats])/sum_all_source_pop
         raw_ind['walkable_healthcare']=sum([s['source_pop']*s['emp_naics_62'] for s in site_stats])/sum_all_source_pop
         raw_ind['walkable_hospitality']=sum([s['source_pop']*s['emp_naics_72'] for s in site_stats])/sum_all_source_pop
         raw_ind['walkable_shopping']=sum([s['source_pop']*s['emp_naics_44-45'] for s in site_stats])/sum_all_source_pop
@@ -390,9 +316,6 @@ class Proximity_Indicator(Indicator):
         end_ind_calc=datetime.datetime.now()
         
         heatmap=self.compute_heatmaps(grid_site_stats)
-        # post_url='https://cityio.media.mit.edu/api/table/update/'+self.table_name       
-        # r = requests.post(post_url+'/access', data = json.dumps(heatmap))
-        # print('Post heatmap: {}'.format(r))
         end_hm_calc=datetime.datetime.now()
         
         print('Prox Ind: {}'.format(end_ind_calc-start_ind_calc))
@@ -413,17 +336,10 @@ class Proximity_Indicator(Indicator):
         return osmnx.graph.graph_from_polygon(geom_wgs_buffered_gdf.iloc[0]['geometry'], network_type='walk')
 
 class Density_Indicator(Indicator):
-    def setup(self, state, table_name_x):
-        self.state=state
-        self.table_name_x=table_name_x
-#         self.requires_geometry=True
+    def setup(self, zones):
+        self.zones=zones
+        self.overlapping_geoids=list(zones.loc[zones['sim_area']].index)
         self.grid_cell_area=None
-#         self.init_geogrid()
-        if 'ALAND' in self.state.geom.columns:
-            self.state.geom['area']=self.state.geom['ALAND']
-        else:
-            self.state.geom['area']=self.state.geom['ALAND10']
-        self.get_overlap_geoids()
         self.compute_base_score_distribution()
                 
     def compute_base_score_distribution(self):
@@ -434,18 +350,18 @@ class Density_Indicator(Indicator):
         """
         self.score_ecdfs={}
         self.base_scores={}
-        self.base_scores['res_density']=self.state.geom.apply(lambda row: self.res_density(row), axis=1)
-        self.base_scores['emp_density']=self.state.geom.apply(lambda row: self.emp_density(row), axis=1)
-        self.base_scores['live_work_score']=self.state.geom.apply(
+        self.base_scores['res_density']=self.zones.apply(lambda row: self.res_density(row), axis=1)
+        self.base_scores['emp_density']=self.zones.apply(lambda row: self.emp_density(row), axis=1)
+        self.base_scores['live_work_score']=self.zones.apply(
             lambda row: self.get_live_work_score(row), axis=1)
         
         # Diversity
-        industry_columns=[col for col in self.state.geom.columns if 'emp_naics' in col]
-        res_income_columns=[col for col in self.state.geom.columns if 'res_income' in col]
+        industry_columns=[col for col in self.zones.columns if 'emp_naics' in col]
+        res_income_columns=[col for col in self.zones.columns if 'res_income' in col]
         
-        self.base_scores['industry_diversity']=self.state.geom.apply(
+        self.base_scores['industry_diversity']=self.zones.apply(
             lambda row: self.get_diversity(row, species_columns=industry_columns), axis=1)
-        self.base_scores['income_diversity']=self.state.geom.apply(
+        self.base_scores['income_diversity']=self.zones.apply(
             lambda row: self.get_diversity(row, species_columns=res_income_columns), axis=1)
         
         for score in self.base_scores:
@@ -454,19 +370,6 @@ class Density_Indicator(Indicator):
 #             plt.title(score)
             base_scores_no_nan=[x for x in self.base_scores[score] if x==x]
             self.score_ecdfs[score]=ECDF(base_scores_no_nan)
-            
-    def get_overlap_geoids(self):
-        """
-        find the geoids of the baseline zones which overlap with hthe geogrid
-        
-        """
-        get_url='https://cityio.media.mit.edu/api/table/'+self.table_name_x
-        with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-            geogrid=gpd.read_file(url.read().decode())
-
-        self.state.geom['copy_GEOID']=self.state.geom.index.copy()
-        grid_intersect_zones=gpd.overlay(geogrid, self.state.geom, 'intersection')
-        self.overlapping_geoids=grid_intersect_zones['copy_GEOID'].unique()
         
     def combine_site_attributes(self, geogrid_data=None):
         """
@@ -474,9 +377,8 @@ class Density_Indicator(Indicator):
         the zones which overlap with the geogrid and (pre-existing programming)
         aggregates them together to get the updated site stats
         """
-        stats_to_aggregate=['total_pop_rac', 'total_employ_wac', 'area']+[
-            col for col in self.state.geom.columns if (('naics' in col) or ('income' in col))]
-        temp_site_stats=dict(self.state.geom.loc[self.overlapping_geoids, 
+        stats_to_aggregate=['area']+[col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
+        temp_site_stats=dict(self.zones.loc[self.overlapping_geoids, 
                                                  stats_to_aggregate].sum())
         if geogrid_data is not None:
             side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
@@ -491,12 +393,13 @@ class Density_Indicator(Indicator):
                 add_res=agg_lbcs['1']
             else:
                 add_res=0    
-            temp_site_stats['total_pop_rac']+=add_res
-            temp_site_stats['total_employ_wac']+=add_emp
+            temp_site_stats['res_total']+=add_res
+            temp_site_stats['emp_total']+=add_emp
             
             # update employment for each NAICS code
             for col in temp_site_stats:
                 if 'naics' in col:
+                    # if this is a double naics code column (eg. 44-45), add the new employment for both 44 and 45
                     col_naics_codes=col.split('naics_')[1].split('-')
                     for code in col_naics_codes:
                         if code in agg_naics:
@@ -504,11 +407,11 @@ class Density_Indicator(Indicator):
                             
             # update residential types
             if 'Residential Low Income' in agg_types:
-                temp_site_stats['res_income_u1250_rac']+=agg_types['Residential Low Income']
+                temp_site_stats['res_income_low']+=agg_types['Residential Low Income']
             if 'Residential Med Income' in agg_types:
-                temp_site_stats['res_income_1251-3333_rac']+=agg_types['Residential Med Income']
+                temp_site_stats['res_income_mid']+=agg_types['Residential Med Income']
             if 'Residential High Income' in agg_types:
-                temp_site_stats['res_income_3333+_rac']+=agg_types['Residential High Income']          
+                temp_site_stats['res_income_high']+=agg_types['Residential High Income']          
         return temp_site_stats
 
     
@@ -518,8 +421,8 @@ class Density_Indicator(Indicator):
         raw_ind['emp_density']=self.emp_density(site_stats)
         raw_ind['live_work_score']=self.get_live_work_score(site_stats)
         
-        industry_columns=[col for col in self.state.geom.columns if 'emp_naics' in col]
-        res_income_columns=[col for col in self.state.geom.columns if 'res_income' in col]
+        industry_columns=[col for col in self.zones.columns if 'emp_naics' in col]
+        res_income_columns=[col for col in self.zones.columns if 'res_income' in col]
         
         raw_ind['industry_diversity']=self.get_diversity(site_stats, species_columns=industry_columns)
         raw_ind['income_diversity']=self.get_diversity(site_stats, species_columns=res_income_columns)
@@ -555,7 +458,7 @@ class Density_Indicator(Indicator):
         or a dict representing a dynamic site
         """
         if obj['area']>0:
-            return obj['total_pop_rac']/obj['area']
+            return obj['res_total']/obj['area']
         return 0
     
     @staticmethod
@@ -565,15 +468,17 @@ class Density_Indicator(Indicator):
         or a dict representing a dynamic site
         """
         if obj['area']>0:
-            return obj['total_employ_wac']/obj['area'] 
+            return obj['emp_total']/obj['area'] 
         return 0
     
     @staticmethod
     def get_live_work_score(obj):
-        if obj['total_pop_rac'] > obj['total_employ_wac']:
-            return obj['total_employ_wac']/obj['total_pop_rac']
+        if obj['emp_total']*obj['res_total']==0:
+            return 0
+        if obj['emp_total'] > obj['res_total']:
+            return obj['emp_total']/obj['res_total']
         else:
-            return obj['total_pop_rac']/obj['total_employ_wac']
+            return obj['res_total']/obj['emp_total']
      
     @staticmethod
     def get_diversity(obj, species_columns):
@@ -592,8 +497,8 @@ class Density_Indicator(Indicator):
 
 def mode_choice_model(all_trips_df):
 #     all_trips_df['mode']=random.choices(['walk', 'drive'], k=len(all_trips_df))
-    all_trips_df['route_distance']=all_trips_df.apply(lambda row: m.route_lengths[row['from_possible_nodes_drive'][0]]
-                                                                        [row['to_possible_nodes_drive'][0]], axis=1)
+    # all_trips_df['route_distance']=all_trips_df.apply(lambda row: m.route_lengths[row['from_possible_nodes_drive'][0]]
+    #                                                                     [row['to_possible_nodes_drive'][0]], axis=1)
     options=['drive', 'cycle', 'walk', 'pt']
     all_trips_df['mode']='drive'
     ind_u1500=all_trips_df['route_distance']<1500
@@ -619,28 +524,20 @@ def mode_choice_model(all_trips_df):
     return all_trips_df
 
 class Mobility_indicator(Indicator):
-    def setup(self, state, table_name, model_radius, external_hw_tags=["motorway","motorway_link","trunk","trunk_link"]):
+    def setup(self, zones, geogrid, table_name, simpop_df, external_hw_tags=["motorway","motorway_link","trunk","trunk_link"]):
         self.N_max=500
+        self.geogrid=geogrid
         self.external_hw_tags=external_hw_tags
-        self.state=state
+        self.zones=zones
         self.table_name=table_name
-        if not hasattr(self.state, 'od'):
-            self.state.get_lodes_data(include=['od'])
-        self.get_geogrid()
-        self.get_overlap_geoids()
-        self.state.geom['sim_area']=self.state.geom.index.isin(self.overlapping_geoids)
-        self.state.subset_geom_by_distance([self.geogrid['x_centroid'].mean(), self.geogrid['y_centroid'].mean()],
-                                           model_radius, 'model_area')
-        simpop_df=state.lodes_to_pop_table(
-            model_subset_name='model_area', sim_subset_name='sim_area')
         self.base_simpop_df=simpop_df.copy()
         self.build_mobsys() 
         print('Init simulation')
         grid_zones=self.create_grid_zones()
-        model_zones=self.state.return_geometry('model_area')
+        model_zones=zones.loc[zones['model_area']]
         model_zones['grid_area']=False
         combined_zones=model_zones.append(grid_zones)
-        sim_geoids=list(self.state.return_geometry('sim_area').index)+list(grid_zones.index)
+        sim_geoids=list(zones.loc[zones['sim_area']].index)+list(grid_zones.index)
         self.sim=OpenCity.Simulation(simpop_df, self.mob_sys, combined_zones, sim_geoids=sim_geoids)
         self.sim.set_choice_models(mode_chooser=mode_choice_model)
         self.create_zone_dist_mat()
@@ -650,41 +547,21 @@ class Mobility_indicator(Indicator):
         centroids=grid_zones['geometry'].centroid
         grid_zones['x_centroid']=[c.x for c in centroids]
         grid_zones['y_centroid']=[c.y for c in centroids]
-        cols_to_init=['total_pop_rac']+ [col for col in self.state.geom.columns if (
-            ('emp' in col) or ('res' in col))]
+        cols_to_init=[col for col in self.zones.columns if (
+            ('emp_' in col) or ('res_' in col))]
         for col in cols_to_init:
             grid_zones[col]=0
         for area_col in ['model_area', 'sim_area', 'grid_area']:
             grid_zones[area_col]=1
         return grid_zones
         
-    def get_geogrid(self):
-        # repetition with proximity indicator
-        get_url='https://cityio.media.mit.edu/api/table/'+self.table_name
-        with urllib.request.urlopen(get_url+'/GEOGRID') as url:
-            self.geogrid=gpd.read_file(url.read().decode())
-        self.geogrid.set_crs("EPSG:4326")
-        centroids=self.geogrid['geometry'].centroid
-        self.geogrid['x_centroid']=[c.x for c in centroids]
-        self.geogrid['y_centroid']=[c.y for c in centroids]
-                       
-    def get_overlap_geoids(self):
-        # repetition with proximity indicator
-        """
-        find the geoids of the baseline zones which overlap with hthe geogrid
-        
-        """
-        self.state.geom['copy_GEOID']=self.state.geom.index
-        grid_intersect_zones=gpd.overlay(self.geogrid, self.state.geom, 'intersection')
-        self.overlapping_geoids=grid_intersect_zones['copy_GEOID'].unique()
-        
     def build_mobsys(self):
         print('Building Mobility System')
         print('\t getting graph')
-        G_drive_sim = self.get_graph_buffered_to_hw_type(self.state.geom.loc[self.state.geom['sim_area']], 
+        G_drive_sim = self.get_graph_buffered_to_hw_type(self.zones.loc[self.zones['sim_area']], 
                                                        self.external_hw_tags, 'drive')
         print('getting external roads')
-        G_drive_model=osmnx.graph_from_polygon(self.state.geom.loc[self.state.geom['model_area']].unary_union,
+        G_drive_model=osmnx.graph_from_polygon(self.zones.loc[self.zones['model_area']].unary_union,
                                  network_type='drive', custom_filter='["highway"~"{}"]'.format('|'.join(self.external_hw_tags)))
         G_drive_combined=osmnx.graph.nx.compose(G_drive_model,G_drive_sim)
 #         for edge in list(G_walk.edges):
@@ -695,6 +572,8 @@ class Mobility_indicator(Indicator):
         
         for edge in list(G_drive_combined.edges):
             G_drive_combined.edges[edge]['travel_time_walk']=G_drive_combined.edges[edge]['length']/(4800/3600)
+            G_drive_combined.edges[edge]['travel_time_cycle']=G_drive_combined.edges[edge]['length']/(14000/3600)
+            G_drive_combined.edges[edge]['travel_time_pt']=G_drive_combined.edges[edge]['length']/(25000/3600)
 
         G_drive_combined=osmnx.utils_graph.get_undirected(G_drive_combined)
 #         fw_pred_drive=PreCompOsmNet.pre_compute_paths(G_drive_combined)
@@ -705,7 +584,7 @@ class Mobility_indicator(Indicator):
                                                          weight_metric='length', 
                                                          save_route_costs=True)
         pre_comp_drive=PreCompOsmNet.PreCompOSMNet(G_drive_combined, fw_all)
-        networks={'drive': pre_comp_drive, 'walk': pre_comp_drive}
+        networks={'drive': pre_comp_drive, 'walk': pre_comp_drive, 'cycle': pre_comp_drive, 'pt': pre_comp_drive}
         
         drive_dict={
             'target_network_id': 'drive',
@@ -713,8 +592,15 @@ class Mobility_indicator(Indicator):
         walk_dict={
             'target_network_id': 'walk',
             'travel_time_metric': 'travel_time_walk'}
+        cycle_dict={
+            'target_network_id': 'cycle',
+            'travel_time_metric': 'travel_time_cycle'}
+        pt_dict={
+            'target_network_id': 'pt',
+            'travel_time_metric': 'travel_time_pt'}
         
-        modes={'drive': OpenCity.Mode(drive_dict), 'walk': OpenCity.Mode(walk_dict)}
+        modes={'drive': OpenCity.Mode(drive_dict), 'walk': OpenCity.Mode(walk_dict),
+        'cycle': OpenCity.Mode(cycle_dict), 'pt': OpenCity.Mode(pt_dict)}
 
         self.mob_sys=OpenCity.MobilitySystem(modes=modes,
                               networks=networks)
@@ -735,7 +621,7 @@ class Mobility_indicator(Indicator):
                     self.dist_mat[zone_index[i]][zone_index[j]]=self.route_lengths[from_node][to_node] 
         
     def get_graph_buffered_to_hw_type(self,geom, external_hw_tags, network_type):
-        for buffer in [i*200 for i in range(10)]:
+        for buffer in [i*200 for i in range(1, 10)]:
             print('Buffer : {}'.format(buffer))
             geom_projected=osmnx.projection.project_gdf(geom)
             geom_projected_buffered=geom_projected.unary_union.buffer(buffer)
@@ -756,7 +642,7 @@ class Mobility_indicator(Indicator):
     def routes_to_deckgl_trip(self, route_table):
         
         mode_id_map={'drive': "0", "cycle": "1", "walk": "2", "pt": "3"}
-        profile_id_map={'u1250':"0", '1251-3333':"1",  '3333+':"2"}
+        profile_id_map={'low':"0", 'mid':"1",  'high':"2"}
         
         mode_split={}
         for mode in mode_id_map:
@@ -811,8 +697,8 @@ class Mobility_indicator(Indicator):
     
     def geogrid_updates(self, geogrid_data):
         new_simpop=[]
-        cols_to_zero=['total_pop_rac']+ [col for col in self.sim.zones.columns if (
-            ('emp' in col) or ('res' in col))]
+        cols_to_zero= [col for col in self.sim.zones.columns if (
+            ('emp_' in col) or ('res_' in col))]
         self.sim.zones.loc[self.sim.zones.grid_area==True, cols_to_zero]=0
         side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
         type_def=geogrid_data.get_type_info()
@@ -831,13 +717,13 @@ class Mobility_indicator(Indicator):
                 total_capacity=height*cell_area/sqm_pperson
                 # update where the residential capacity exists
                 if 'Residential' in name:
-                    self.sim.zones.loc[i_c, 'total_pop_rac']=total_capacity
+                    self.sim.zones.loc[i_c, 'res_total']=total_capacity
                     if name=='Residential Low Income':
-                        self.sim.zones.loc[i_c, 'res_income_u1250_rac']=total_capacity
+                        self.sim.zones.loc[i_c, 'res_income_low']=total_capacity
                     elif name=='Residential Med Income':
-                        self.sim.zones.loc[i_c, 'res_income_1251-3333_rac']=total_capacity
+                        self.sim.zones.loc[i_c, 'res_income_mid']=total_capacity
                     elif name=='Residential High Income':
-                        self.sim.zones.loc[i_c, 'res_income_3333+_rac']=total_capacity
+                        self.sim.zones.loc[i_c, 'res_income_high']=total_capacity
         for i_c, cell in enumerate(geogrid_data):
             name=cell['name']
             type_info=type_def[name]
@@ -855,16 +741,16 @@ class Mobility_indicator(Indicator):
                 if type_info['NAICS'] is not None:
                     workers={code: int(type_info['NAICS'][code]*total_capacity) for code in  type_info['NAICS']}   
                     for code in workers:
-                        home_locations=self.sample_home_locations(i_c, '3333+', n=workers[code])
+                        home_locations=self.sample_home_locations(i_c, 'high', n=workers[code])
                         for i_w in range(workers[code]):
                             new_simpop.append({'work_geoid': i_c,'home_geoid': home_locations[i_w],
-                                               'naics': code, 'earnings': '3333+',
+                                               'naics': code, 'earnings': 'high',
                                               'age': '30-54'})
 
         return new_simpop
             
     def sample_home_locations(self, work_geoid, earnings, n):
-        attraction=self.sim.zones['res_income_{}_rac'.format(earnings)]
+        attraction=self.sim.zones['res_income_{}'.format(earnings)]
         impedance=[self.dist_mat[hid][work_geoid] for hid in self.sim.zones.index]
         # weights=np.divide(attraction,np.array(impedance))
         weights=np.array(attraction)
@@ -876,6 +762,9 @@ class Mobility_indicator(Indicator):
         simpop_df=self.sim.create_simple_HWH_schedules(simpop_df)
         print('Trip table')
         all_trips_df=self.sim.create_trip_table(simpop_df)
+        all_trips_df['route_distance']=all_trips_df.apply(lambda row: self.route_lengths[row['from_possible_nodes_drive'][0]]
+                                                                    [row['to_possible_nodes_drive'][0]], axis=1)
+        all_trips_df=self.sim.mode_chooser(all_trips_df)
         print('Route table')
         route_table=self.sim.get_routes_table(all_trips_df)
         print('DeckGL')
@@ -901,36 +790,21 @@ class Mobility_indicator(Indicator):
 
 if __name__ == "__main__":
     table_name=sys.argv[1]
-    if len(sys.argv)>2:
-        geom_type=sys.argv[2]
-    else:
-        geom_type='block_group'
 
-    if len(sys.argv)>3:
-        int_zone_file=sys.argv[3]
-        interactive_zone=gpd.read_file('./data/{}_interactive.geojson'.format(int_zone_file))
-    else:
-        interactive_zone=None
-
-    properties=init_geogrid(table_name, interactive_zone=interactive_zone)
-    state_fips=identify_state(properties)
-
-    st=OpenCity.US_State(state_fips, year=2018, geom_type=geom_type)
-    st.get_geometry()
-	# st.remove_non_urban_zones()
-    st.get_lodes_data( include=['wac', 'rac', 'od'])
-    st.add_lodes_cols_to_shape()
+    # Load the saved data
+    geogrid=gpd.read_file('tables/{}/geogrid.geojson'.format(table_name))
+    zones=gpd.read_file('tables/{}/zones.geojson'.format(table_name))
+    zones['GEOID']=zones['GEOID'].astype(int)
+    zones=zones.set_index('GEOID')
+    simpop_df=pd.read_csv('tables/{}/simpop_df.csv'.format(table_name))
 
 
     H=Handler(table_name=table_name)
     H.reset_geogrid_data()
 
-    d=Density_Indicator(state=st, table_name_x=table_name)
-    p=Proximity_Indicator(state=st, table_name=table_name)
-    m=Mobility_indicator(state=st, table_name=table_name, model_radius=5000)
-
-    H.add_indicator(d)
-    H.add_indicator(p)
-    H.add_indicator(m)
+    d=Density_Indicator(zones=zones)
+    p=Proximity_Indicator(zones=zones, geogrid=geogrid)
+    m=Mobility_indicator(zones, geogrid, table_name, simpop_df)
+    H.add_indicators([d, p, m])
 
     H.listen()
