@@ -184,8 +184,9 @@ class Proximity_Indicator(Indicator):
                  (self.zones['nearest_dist']<self.zone_to_node_tolerance))
                 ].index.values)
         reachable_grid_cells=list(self.geogrid.loc[
-                ((self.geogrid['central_node'].isin(list(sub_graph_nodes)))&
-                 (self.geogrid['nearest_dist']<self.grid_to_node_tolerance))
+                ((self.geogrid['interactive']=='Web')&
+                    (self.geogrid['central_node'].isin(list(sub_graph_nodes)))&
+                    (self.geogrid['nearest_dist']<self.grid_to_node_tolerance))
                 ].index.values)
         return {'zones': reachable_zones, 'cells': reachable_grid_cells}
     
