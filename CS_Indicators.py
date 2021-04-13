@@ -268,11 +268,11 @@ class Proximity_Indicator(Indicator):
         for i_c, cell_stats in enumerate(grid_reachable_area_stats):
             features.append({
               "type": "Feature",
-              "properties": [max((cell_stats['res_total']/max_scores['walkable_housing'])**2, 1), 
-                             max((cell_stats['emp_total']/max_scores['walkable_employment'])**2, 1),
-                             max((cell_stats['emp_naics_62']/max_scores['walkable_healthcare'])**2, 1), 
-                             max((cell_stats['emp_naics_72']/max_scores['walkable_hospitality'])**2, 1), 
-                             max((cell_stats['emp_naics_44-45']/max_scores['walkable_shopping'])**2, 1)],
+              "properties": [min((cell_stats['res_total']/max_scores['walkable_housing'])**2, 1), 
+                             min((cell_stats['emp_total']/max_scores['walkable_employment'])**2, 1),
+                             min((cell_stats['emp_naics_62']/max_scores['walkable_healthcare'])**2, 1), 
+                             min((cell_stats['emp_naics_72']/max_scores['walkable_hospitality'])**2, 1), 
+                             min((cell_stats['emp_naics_44-45']/max_scores['walkable_shopping'])**2, 1)],
               "geometry": {
                 "type": "Point",
                 "coordinates": [
