@@ -15,15 +15,9 @@ from scipy import spatial
 import numpy as np
 import sys
 import pandas as pd
+import copy
 
 """
-TODO:
-make a base class for proximity and density indicators to elimate repetition
-state only used for state.geom and subsetting thereof- really just need a shape file
-relevant column names should be in a settings file
-all US-specific functionality should be in OpenCity
-separate out functions for combining grid stats with zone stats- repeated in both indicators now
-only consider interactive cells in updates
 """
 
 def aggregate_types_over_grid(geogrid_data, side_length, type_def):
@@ -45,30 +39,6 @@ def aggregate_types_over_grid(geogrid_data, side_length, type_def):
         else:
             aggregated[name]=total_capacity
     return aggregated
-
-def pop_one_cell(cell, side_length, type_def):
-    name=cell['name']
-    type_info=type_def[name]
-    height=cell['height']
-    cell_area=side_length*side_length
-    if isinstance(height, list):
-        height=height[-1]
-    if 'sqm_pperson' in type_info:
-        sqm_pperson=type_info['sqm_pperson']
-    else:
-        sqm_pperson=50
-    total_capacity=height*cell_area/sqm_pperson
-    if type_info['NAICS'] is None:
-        emp=0
-    else:
-        emp=total_capacity*sum(type_info['NAICS'].values())
-    if type_info['LBCS'] is None:
-        res=0
-    else:
-        res=total_capacity*sum([type_info['LBCS'][code] for code in type_info['LBCS'] if code.startswith('1')])
-    return res, emp
-    
-        
 
 def aggregate_attributes_over_grid(agg_types, attribute, side_length, type_def, digits=None):
     # TODO: eliminate repetition with previous function
@@ -108,6 +78,7 @@ def get_central_nodes(geodf, G):
 
 class Proximity_Indicator(Indicator):
     def setup(self, zones, geogrid, buffer=1200):
+        print('Setting up Proximity Indicator')
         self.zone_to_node_tolerance=500
         self.grid_to_node_tolerance=100
         self.buffer=buffer
@@ -115,10 +86,12 @@ class Proximity_Indicator(Indicator):
         self.indicator_type = 'hybrid'
         self.geogrid=geogrid
         self.overlapping_geoids=list(zones.loc[zones['sim_area']].index)
-#         self.G=self.get_network_around_geom_buffered(self.geogrid)
+        self.all_site_ids=self.overlapping_geoids+list(range(len(geogrid_data)))  
         self.get_graph_reference_area()
+        self.get_reachable_geoms_from_all()
+        self.naics_codes=[col for col in zones.columns if 'naics' in col]
     
-        print('Getting central nodes')
+        print('\t Getting central nodes')
         zones_nearest_nodes, zones_nearest_dist= get_central_nodes(self.zones, self.ref_G)
         self.zones['central_node']=zones_nearest_nodes
         self.zones['nearest_dist']=zones_nearest_dist
@@ -127,7 +100,6 @@ class Proximity_Indicator(Indicator):
         self.geogrid['central_node']=grid_nearest_nodes
         self.geogrid['nearest_dist']=grid_nearest_dist
         self.calculate_baseline_scores()
-        self.get_reachable_geoms_all_interactive()
             
             
     def make_ego_graph_around_geometry(self, zone, tolerance):
@@ -143,35 +115,45 @@ class Proximity_Indicator(Indicator):
     
     def get_graph_reference_area(self):
         reference_zones=self.zones.loc[self.zones['reference_area']]
-        print('Downloading graph for reference area')
+        print('\t Downloading graph for reference area')
         reference_zone_graph=self.get_network_around_geom_buffered(reference_zones)
         self.ref_G=reference_zone_graph
         
     def calculate_baseline_scores(self):
         # TODO: should use the get_reachable_geoms function?
-        print('Calculating baseline scores')
-        self.base_scores={'walkable_{}'.format(x): [] for x in [
-            'employment', 'housing', 'healthcare', 'hospitality', 'shopping']}
+        print('\t Calculating baseline scores')
+#         self.base_scores={'walkable_{}'.format(x): [] for x in [
+#             'employment', 'housing', 'healthcare', 'hospitality', 'shopping']}
+        base_scores={}
+        self.base_attributes={}
         self.score_ecdfs={}
+        stats_to_aggregate=[col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
+        # get the baseline reachable attributes and scores for every zone
         for ind, row in self.zones.loc[self.zones['reference_area']].iterrows():
-            # TODO: normalise each score by density at source?
-            sub_graph=self.make_ego_graph_around_geometry(row, tolerance=self.zone_to_node_tolerance)
-            sub_graph_nodes=sub_graph.nodes(data=False)
-            reachable_zones= list(self.zones.loc[
-                ((self.zones['central_node'].isin(list(sub_graph_nodes)))&
-                 (self.zones['nearest_dist']<self.zone_to_node_tolerance))
-                ].index.values)
-            stats_to_aggregate=[
-                col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
-            reachable_area_attributes=self.zones.loc[reachable_zones][stats_to_aggregate].sum()
-            self.base_scores['walkable_employment'].append(reachable_area_attributes['emp_total'])
-            self.base_scores['walkable_housing'].append(reachable_area_attributes['res_total'])
-            self.base_scores['walkable_healthcare'].append(reachable_area_attributes['emp_naics_62'])
-            self.base_scores['walkable_hospitality'].append(reachable_area_attributes['emp_naics_72'])
-            self.base_scores['walkable_shopping'].append(reachable_area_attributes['emp_naics_44-45'])
-        for score in self.base_scores:
-            base_scores_no_nan=[x for x in self.base_scores[score] if x==x]
+            reachable_zones=self.zone_to_reachable[ind]['zones']
+            self.base_attributes[ind]=self.zones.loc[reachable_zones][stats_to_aggregate].sum().to_dict()
+            self.base_attributes[ind]['source_res']=row['res_total']
+            self.base_attributes[ind]['source_emp']=row['emp_total']
+            # get scores for individual zones- weighting cancels out
+            base_scores[ind]=self.attributes_to_scores([self.base_attributes[ind]])
+            
+        # Create the ECDFs for each score using only the zones (not the grid cells
+        self.base_zones_scores=pd.DataFrame.from_dict(base_scores, orient='index')
+        for score in self.base_zones_scores.columns:
+            print(score)
+            base_scores_no_nan=[x for x in self.base_zones_scores[score] if x==x]
             self.score_ecdfs[score]=ECDF(base_scores_no_nan)
+            
+        # get weighted scores across the simulation area zones 
+        # (ignore the grid which is empty in reference and therefore would be weighted zero)
+        ref_scores=self.attributes_to_scores([self.base_attributes[ind] for ind in self.overlapping_geoids])
+        self.ref_ind=self.normalise_ind(ref_scores)
+            
+        # get the base reachable attributes for every grid cell location
+        for i_c in range(len(self.geogrid)):
+            reachable_zones=self.grid_to_reachable[i_c]['zones']
+            self.base_attributes[i_c]=self.zones.loc[reachable_zones][stats_to_aggregate].sum().to_dict()
+            
             
     def get_reachable_geoms(self, zone, tolerance):
         """
@@ -190,78 +172,129 @@ class Proximity_Indicator(Indicator):
                 ].index.values)
         return {'zones': reachable_zones, 'cells': reachable_grid_cells}
     
-    def get_reachable_geoms_all_interactive(self):
+    def get_reachable_geoms_from_all(self):
         """
         For every grid cell and every zone which intersects the grid:
         find the reachable zones and reachable grid cells
         """
+        print('\t Finding all reachable geometries from each geometry')
         self.grid_to_reachable, self.zone_to_reachable={}, {}
         for ind, row in self.geogrid.iterrows():
             self.grid_to_reachable[ind]=self.get_reachable_geoms(row, self.grid_to_node_tolerance)
-        for ind, row in self.zones.loc[self.overlapping_geoids].iterrows():
+        for ind, row in self.zones.loc[self.zones['reference_area']].iterrows():
             self.zone_to_reachable[ind]=self.get_reachable_geoms(row, self.zone_to_node_tolerance)
+        # create a reverse lookup to map from eacg grid cell to the cells from which it is reachable
+        self.grid_to_reverse_reachable={}
+        for i, row_i in self.geogrid.iterrows():
+            self.grid_to_reverse_reachable[i]={'zones': [], 'cells': []}
+            for j, row_j in self.geogrid.iterrows():
+                if i in self.grid_to_reachable[j]['cells']:
+                    self.grid_to_reverse_reachable[i]['cells'].append(j)
+            for ind_z, row_z in self.zones.loc[self.zones['reference_area']].iterrows():
+                if i in self.zone_to_reachable[ind_z]['cells']:
+                    self.grid_to_reverse_reachable[i]['zones'].append(ind_z)                    
             
-    def aggregate_reachable_attributes_one_source(self, zones, cells, geogrid_data=None):
-        stats_to_aggregate=[
-                col for col in self.zones.columns if (('res_' in col) or ('emp_' in col))]
-        reachable_area_stats=dict(self.zones.loc[zones, stats_to_aggregate].sum())
-        if geogrid_data is not None:
-            geogrid_data_reachable=[geogrid_data[c] for c in cells]
-            side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
-            type_def=geogrid_data.get_type_info()
-            agg_types=aggregate_types_over_grid(geogrid_data_reachable, side_length=side_length, type_def=type_def)
-            agg_naics=aggregate_attributes_over_grid(agg_types, 'NAICS', side_length=side_length, type_def=type_def, digits=2)
-            agg_lbcs=aggregate_attributes_over_grid(agg_types, 'LBCS', side_length=side_length, type_def=type_def, digits=1)
-            
-            # update total residential and total employment
-            add_emp=sum(agg_naics.values())
-            if '1' in agg_lbcs:
-                add_res=agg_lbcs['1']
-            else:
-                add_res=0    
-            reachable_area_stats['res_total']+=add_res
-            reachable_area_stats['emp_total']+=add_emp
-            
-            # update employment for each NAICS code
-            for col in reachable_area_stats:
-                if 'naics' in col:
-                    col_naics_codes=col.split('naics_')[1].split('-')
-                    for code in col_naics_codes:
-                        if code in agg_naics:
-                            reachable_area_stats[col]+=agg_naics[code]                             
-            # update residential types
-            if 'Residential Low Income' in agg_types:
-                reachable_area_stats['res_income_low']+=agg_types['Residential Low Income']
-            if 'Residential Med Income' in agg_types:
-                reachable_area_stats['res_income_mid']+=agg_types['Residential Med Income']
-            if 'Residential High Income' in agg_types:
-                reachable_area_stats['res_income_high']+=agg_types['Residential High Income'] 
-        return reachable_area_stats
-                
-    def aggregate_reachable_attributes_all_sources(self, geogrid_data=None):
-        zone_reachable_area_stats, grid_reachable_area_stats=[], []
-        for ind, row in self.zones.loc[self.overlapping_geoids].iterrows():
-            reachable_area_stats=self.aggregate_reachable_attributes_one_source(
-                self.zone_to_reachable[ind]['zones'], self.zone_to_reachable[ind]['cells'], geogrid_data)
-            reachable_area_stats['source_pop']=row['res_total']
-            reachable_area_stats['source_emp']=row['emp_total']
-            reachable_area_stats['GEOID']=ind
-            zone_reachable_area_stats.append(reachable_area_stats)
-        if geogrid_data is not None:
-            side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
-            type_def=geogrid_data.get_type_info()
-            for i_c, cell in enumerate(geogrid_data):
-                reachable_area_stats=self.aggregate_reachable_attributes_one_source(
-                    self.grid_to_reachable[i_c]['zones'], self.grid_to_reachable[i_c]['cells'], geogrid_data)
-                res, emp=pop_one_cell(cell, side_length, type_def)
-                reachable_area_stats['source_pop']=res
-                reachable_area_stats['source_emp']=emp
-                reachable_area_stats['id']=i_c
-                grid_reachable_area_stats.append(reachable_area_stats)
-        return zone_reachable_area_stats, grid_reachable_area_stats
+    def attributes_to_scores(self, attributes):        
+        total_emp=sum([s['source_emp'] for s in attributes])
+        total_res=sum([s['source_res'] for s in attributes])
+
+        scores={}
+
+        scores['walkable_housing']=sum([s['source_emp']*s['res_total'] for s in attributes])/total_emp
+        scores['walkable_employment']=sum([s['source_res']*s['emp_total'] for s in attributes])/total_res
+        scores['walkable_healthcare']=sum([s['source_res']*s['emp_naics_62'] for s in attributes])/total_res
+        scores['walkable_hospitality']=sum([s['source_res']*s['emp_naics_72'] for s in attributes])/total_res
+        scores['walkable_shopping']=sum([s['source_res']*s['emp_naics_44-45'] for s in attributes])/total_res
+        return scores
     
+    def return_indicator(self, geogrid_data):
+        start_ind_calc=datetime.datetime.now()
+        # make copy of base_scores
+        new_attributes=self.get_new_reachable_attributes(geogrid_data)
+        new_attributes_site= [new_attributes[ind] for ind in self.all_site_ids]
+        new_scores=self.attributes_to_scores(new_attributes_site)
+        new_ind=self.normalise_ind(new_scores)
+        outputs=[]
+        for ind_name in new_scores:
+            outputs.append({'name': ind_name ,
+                            'value': new_ind[ind_name],
+                            'raw_value': new_scores[ind_name],
+                            'ref_value': self.ref_ind[ind_name],
+                            'viz_type': self.viz_type})
+        end_ind_calc=datetime.datetime.now()
+        
+        new_attributes_site= [new_attributes[i_c] for i_c in range(len(geogrid_data))]
+        heatmap=self.compute_heatmaps(new_attributes_site)
+        
+        end_hm_calc=datetime.datetime.now()
+        
+        print('Prox Ind: {}'.format(end_ind_calc-start_ind_calc))
+        print('Prox HM: {}'.format(end_hm_calc-end_ind_calc))
+        
+        return {'heatmap':heatmap,'numeric':outputs}
+    
+    
+    def get_new_reachable_attributes(self, geogrid_data):
+        new_attributes=copy.deepcopy(self.base_attributes)
+        side_length=geogrid_data.get_geogrid_props()['header']['cellSize']
+        cell_area=side_length*side_length
+        type_def=geogrid_data.get_type_info()
+        for i_c, cell in enumerate(geogrid_data):
+            name=cell['name']
+            height=cell['height']
+            if isinstance(height, list):
+                height=height[-1]
+            type_info = type_def[name] 
+            if 'sqm_pperson' in type_info:
+                sqm_pperson=type_info['sqm_pperson']
+            else:
+                sqm_pperson=50
+            total_capacity=height*cell_area/sqm_pperson
+            agg_naics=aggregate_attributes_over_grid(
+                {name: total_capacity}, 'NAICS', side_length, type_def, digits=2)
+            agg_lbcs=aggregate_attributes_over_grid(
+                {name: total_capacity}, 'LBCS', side_length, type_def, digits=1)
+
+            added_attributes={}
+            cell_employment=sum(agg_naics.values())
+            new_attributes[i_c]['source_emp']=cell_employment
+            added_attributes['emp_total']=cell_employment
+
+            if '1' in agg_lbcs:
+                cell_population=agg_lbcs['1']
+            else:
+                cell_population=0
+
+            added_attributes['res_total']=cell_population
+            new_attributes[i_c]['source_res']=cell_population
+
+            for combined_code in self.naics_codes:
+                naics_codes=combined_code.split('naics_')[1].split('-')
+                for code in naics_codes:
+                    if code in agg_naics:
+                        if code in added_attributes:
+                            added_attributes[combined_code]+=agg_naics[code]
+                        else:
+                            added_attributes[combined_code]=agg_naics[code]
+            # the newly attributes are added to every zone and cell which can reach this cell   
+            reverse_reachable=self.grid_to_reverse_reachable[i_c]
+            for ind_z in reverse_reachable['zones']:
+                for attr in added_attributes:
+                    new_attributes[ind_z][attr]+=added_attributes[attr]
+            for j_c in reverse_reachable['cells']:
+                for attr in added_attributes:
+                    new_attributes[j_c][attr]+=added_attributes[attr] 
+        return new_attributes
+
+    def normalise_ind(self, raw_ind):
+        norm_ind={}
+        for ind_name in raw_ind:
+            norm_ind[ind_name]=self.score_ecdfs[ind_name](raw_ind[ind_name])       
+        return norm_ind
+
+
     def compute_heatmaps(self, grid_reachable_area_stats):
-        max_scores={score: max(self.base_scores[score]) for score in self.base_scores}
+        max_scores={score: self.base_zones_scores[score].max() for score in self.base_zones_scores}
         features=[]
         heatmap={'type': 'FeatureCollection',
                  'properties': ['housing', 'employment', 'healthcare', 'hospitality', 'shopping']}
@@ -284,45 +317,6 @@ class Proximity_Indicator(Indicator):
             })
         heatmap['features']=features
         return heatmap
-                 
-    def calculate_indicators(self, site_stats):
-        raw_ind={}
-        sum_all_source_pop=sum([s['source_pop'] for s in site_stats])
-        sum_all_source_emp=sum([s['source_emp'] for s in site_stats])
-        raw_ind['walkable_housing']=sum([s['source_emp']*s['res_total'] for s in site_stats])/sum_all_source_emp
-        raw_ind['walkable_employment']=sum([s['source_pop']*s['emp_total'] for s in site_stats])/sum_all_source_pop
-        raw_ind['walkable_healthcare']=sum([s['source_pop']*s['emp_naics_62'] for s in site_stats])/sum_all_source_pop
-        raw_ind['walkable_hospitality']=sum([s['source_pop']*s['emp_naics_72'] for s in site_stats])/sum_all_source_pop
-        raw_ind['walkable_shopping']=sum([s['source_pop']*s['emp_naics_44-45'] for s in site_stats])/sum_all_source_pop
-        
-        norm_ind={}
-        for ind_name in raw_ind:
-            norm_ind[ind_name]=self.score_ecdfs[ind_name](raw_ind[ind_name])       
-        return {'raw': raw_ind, 'norm': norm_ind}
-                  
-    def return_indicator(self, geogrid_data):
-        start_ind_calc=datetime.datetime.now()
-        zone_site_stats, grid_site_stats=self.aggregate_reachable_attributes_all_sources(geogrid_data)
-        new_ind=self.calculate_indicators(zone_site_stats + grid_site_stats)
-        
-        base_zone_site_stats, base_grid_site_stats=self.aggregate_reachable_attributes_all_sources()
-        base_ind=self.calculate_indicators(base_zone_site_stats)
-        
-        outputs=[]
-        for ind_name in new_ind['raw']:
-            outputs.append({'name': ind_name.replace('_', ' ').title(),
-                           'raw_value': new_ind['raw'][ind_name],
-                           'value': new_ind['norm'][ind_name],
-                           'ref_value': base_ind['norm'][ind_name]})
-        end_ind_calc=datetime.datetime.now()
-        
-        heatmap=self.compute_heatmaps(grid_site_stats)
-        end_hm_calc=datetime.datetime.now()
-        
-        print('Prox Ind: {}'.format(end_ind_calc-start_ind_calc))
-        print('Prox HM: {}'.format(end_hm_calc-end_ind_calc))
-        
-        return {'heatmap':heatmap,'numeric':outputs}
       
     def get_network_around_geom_buffered(self, geom):
         """
@@ -526,7 +520,7 @@ def mode_choice_model(all_trips_df):
 
 class Mobility_indicator(Indicator):
     def setup(self, zones, geogrid, table_name, simpop_df, external_hw_tags=["motorway","motorway_link","trunk","trunk_link"]):
-        self.N_max=500
+        self.N_max=250
         self.geogrid=geogrid
         self.external_hw_tags=external_hw_tags
         self.zones=zones
