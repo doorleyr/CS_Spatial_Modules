@@ -81,16 +81,15 @@ class Proximity_Indicator(Indicator):
         print('Setting up Proximity Indicator')
         self.zone_to_node_tolerance=500
         self.grid_to_node_tolerance=100
+        self.naics_codes=[col for col in zones.columns if 'naics' in col]
         self.buffer=buffer
         self.zones=zones
         self.indicator_type = 'hybrid'
         self.geogrid=geogrid
         self.overlapping_geoids=list(zones.loc[zones['sim_area']].index)
-        self.all_site_ids=self.overlapping_geoids+list(range(len(geogrid_data)))  
+        self.all_site_ids=self.overlapping_geoids+list(range(len(geogrid)))  
         self.get_graph_reference_area()
-        self.get_reachable_geoms_from_all()
-        self.naics_codes=[col for col in zones.columns if 'naics' in col]
-    
+        
         print('\t Getting central nodes')
         zones_nearest_nodes, zones_nearest_dist= get_central_nodes(self.zones, self.ref_G)
         self.zones['central_node']=zones_nearest_nodes
@@ -99,6 +98,8 @@ class Proximity_Indicator(Indicator):
         grid_nearest_nodes, grid_nearest_dist= get_central_nodes(self.geogrid, self.ref_G)
         self.geogrid['central_node']=grid_nearest_nodes
         self.geogrid['nearest_dist']=grid_nearest_dist
+
+        self.get_reachable_geoms_from_all()
         self.calculate_baseline_scores()
             
             
@@ -140,7 +141,6 @@ class Proximity_Indicator(Indicator):
         # Create the ECDFs for each score using only the zones (not the grid cells
         self.base_zones_scores=pd.DataFrame.from_dict(base_scores, orient='index')
         for score in self.base_zones_scores.columns:
-            print(score)
             base_scores_no_nan=[x for x in self.base_zones_scores[score] if x==x]
             self.score_ecdfs[score]=ECDF(base_scores_no_nan)
             
