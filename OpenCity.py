@@ -199,10 +199,10 @@ class US_State():
     def add_lodes_cols_to_shape(self):
         rac_column_name_map={'C000': 'res_total',
         					'CE01': 'res_income_low',
-        					'CE02': 'res_income_med',
+        					'CE02': 'res_income_mid',
         					'CE03': 'res_income_high',
                              'CA01': 'res_age_low',
-                             'CA02': 'res_age_med',
+                             'CA02': 'res_age_mid',
                              'CA03': 'res_age_high',
                              'CD01': 'res_edu_no_highsch',
                              'CD02': 'res_edu_highsch',
@@ -210,7 +210,7 @@ class US_State():
                              'CD04': 'res_edu_bach_or_higher'}
         wac_column_name_map={'C000': 'emp_total',
                 			'CE01': 'emp_income_low',
-        					'CE02': 'emp_income_med',
+        					'CE02': 'emp_income_mid',
         					'CE03': 'emp_income_high',
                              'CA01': 'emp_age_low',
                              'CA02': 'emp_age_mid',
