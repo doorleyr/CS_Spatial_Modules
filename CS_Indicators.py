@@ -503,15 +503,15 @@ def mode_choice_model(all_trips_df):
 
     all_trips_df.loc[ind_u1500==True, 'mode']=np.random.choice(
         options, size=sum(ind_u1500), 
-        replace=True, p=[0.2, 0.15, 0.5, 0.15])
+        replace=True, p=[0.1, 0.2, 0.6, 0.1])
 
     all_trips_df.loc[ind_1500_5k==True, 'mode']=np.random.choice(
         options, size=sum(ind_1500_5k), 
-        replace=True, p=[0.4, 0.15, 0.25, 0.2])
+        replace=True, p=[0.25, 0.15, 0.3, 0.3])
 
     all_trips_df.loc[ind_5k_10k==True, 'mode']=np.random.choice(
         options, size=sum(ind_5k_10k), 
-        replace=True, p=[0.7, 0.04, 0.01, 0.25])
+        replace=True, p=[0.6, 0.04, 0.01, 0.35])
 
     all_trips_df.loc[ind_10kplus==True, 'mode']=np.random.choice(
         options, size=sum(ind_10kplus), 
@@ -764,7 +764,9 @@ class Mobility_indicator(Indicator):
         route_table=self.sim.get_routes_table(all_trips_df)
         print('DeckGL')
         deckgl_trips=self.routes_to_deckgl_trip(route_table)
-        return deckgl_trips
+        by_mode=route_table.groupby('mode').size()
+        ind=(by_mode['cycle']+by_mode['walk'])/by_mode.sum()
+        return deckgl_trips, ind
     
     def return_indicator(self, geogrid_data):
         print('Starting MM Update')
@@ -772,10 +774,14 @@ class Mobility_indicator(Indicator):
         new_simpop_df=pd.DataFrame(new_simpop)
         combined_simpop=self.base_simpop_df.append(new_simpop_df)
         sample_simpop_df=combined_simpop.sample(min(self.N_max, len(combined_simpop)))
-        deckgl_trips=self.simulate(sample_simpop_df)
+        deckgl_trips, ind=self.simulate(sample_simpop_df)
         self.post_trips(deckgl_trips)
         print('Finished MM Update')
-        return None
+        return {'name': 'Active Mobility',
+                           'raw_value': ind,
+                           'value': ind,
+                           'ref_value': 0.1,
+                           'viz_type':'radar'}
     
     def post_trips(self, deckgl_trips):
         post_url='https://cityio.media.mit.edu/api/table/'+self.table_name
