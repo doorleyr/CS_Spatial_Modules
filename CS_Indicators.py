@@ -778,8 +778,9 @@ class Mobility_indicator(Indicator):
         return None
     
     def post_trips(self, deckgl_trips):
-        post_url='https://cityio.media.mit.edu/api/table/update/'+self.table_name
-        r = requests.post(post_url+'/ABM2', data = json.dumps(deckgl_trips))
+        post_url='https://cityio.media.mit.edu/api/table/'+self.table_name
+        r = requests.post(post_url+'/ABM2', data = json.dumps(deckgl_trips),
+        	headers={'Content-Type': 'application/json'})
         print('Post ABM: {}'.format(r))
 
 
