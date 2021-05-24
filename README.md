@@ -10,7 +10,7 @@ The data required are:
 - an O-D matrix, optionally stratified by demographic attributes and/or industry. eg:
 
 | Home GEOID | Work GEOID | N_total | N_income_low | ... | N_NAICS_44-45 | ...|
-| --------- | --------- --------- | --------- | --------- | --------- | --------- |
+| --------- | --------- | --------- | --------- | --------- | --------- | --------- |
 | 1  | 1 | 30  | 15  | ...  | 5  | ...  |
 | 1  | 2 | 40  | 17  | ...  | 9  | ...  |
 | ... | ... | ... | ... | ... | ... |...  |
