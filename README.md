@@ -1,24 +1,24 @@
 # CS_Spatial_Modules
 Create spatial indicators and mobility simulations for CityScope.
 
-# OpenCity
+## OpenCity
 A tool for creating simple mobility simulations and vizualisations with minimal data inputs.
 
-## Data
+### Data
 The data required are:
 - a shapefile of geometries in the study region
 - an O-D matrix, optionally stratified by demographic attributes and/or industry. eg:
 
 | Home GEOID | Work GEOID | N_total | N_income_low | ... | N_NAICS_44-45 | ...|
-| ------------- | ------------- |------------- |
+| --------- | --------- --------- | --------- | --------- | --------- | --------- |
 | 1  | 1 | 30  | 15  | ...  | 5  | ...  |
 | 1  | 2 | 40  | 17  | ...  | 9  | ...  |
 | ... | ... | ... | ... | ... | ... |...  |
 
 For USA-based projects the data above can be easily obtained from public data sources using the tools in this repository.
 
-## Usage
-### Build geometry for state
+### Usage
+#### Build geometry for state
 Specify
 - the state where the simulation will take place 
 - the geometry type ('block_group' (default) or 'block')
@@ -50,7 +50,7 @@ sim_zones=state.return_geometry('sim_area')
 model_zones=state.return_geometry('model_area')
 ```
 
-### Get commuting data for state from LEHD
+#### Get commuting data for state from LEHD
 ```
 state.get_lodes_data()
 ```
@@ -60,7 +60,7 @@ simpop_df=state.lodes_to_pop_table(model_subset_name='model_area',
                                   sim_subset_name='sim_area')
 ```
 
-### Build mobility system for same area
+#### Build mobility system for same area
 Get the road network(s). These are used to create [pandana](https://github.com/UDST/pandana) network objects.
 ```
 import pandana
@@ -96,7 +96,7 @@ Create mobility system using the pandana network(s) and mode definition(s)
 mob_sys=MobilitySystem(modes=modes,
                       networks=networks)
 ```
-### Create the Simulation Model
+#### Create the Simulation Model
 In order to reduct computational burden, the population can be further restricted to a maximum by using the "sample_N" parameter
 ```
 sim=OpenCity.Simulation(simpop_df, mob_sys, model_zones)
@@ -104,7 +104,7 @@ simpop_df=sim.get_simpop_subset(simpop_df, sample_N=1000)
 
 ```
 
-### Simulate trips and trajectories
+#### Simulate trips and trajectories
 ```
 all_trips_df=sim.create_trip_table(simpop_df)
 all_trips_df=sim.mode_chooser(all_trips_df)
@@ -112,7 +112,7 @@ route_table=sim.get_routes_table(all_trips_df)
 
 ```
 
-### Visualising Outputs
+#### Visualising Outputs
 Get resulting trips as a GeoDataFrame of 'LineString's
 ```
 route_gdf=sim.route_table_to_geo(route_table)
@@ -124,16 +124,16 @@ start_day_time_stamp=
 geo_dict=sim.route_gdf_to_trips_geojson(route_gdf, start_day_time_stamp)
 ```
 
-# CityScope Indicators
+## CityScope Indicators
 A set of modules which generate interactive indicators for CityScope project. Communication with [cityIO](https://github.com/CityScope/CS_CityIO) is handled via the [cs-brix](https://github.com/CityScope/CS_Brix) library.
 
-## Data
+### Data
 The data required are:
 - a shapefile of zone geometries in the study region. This should include columns indicating (i) counts of people living in each area by demographic categories and (ii) counts of people employed in each area by demographic categories.
 
 
 | GEOID  | res_income_low | res_income_med | ... | emp_total | emp_income_low | ... | geometry |
-| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |------------- |
 | 1  | 1000 | 500  | 300 | ...  | 600  | ...  | POLYGON(...) |
 | 2  | 1200 | 600  | 200  | ...  | 550 | ...  |POLYGON(...) |
 |  ...   |  ...  |  ...   |  ...   | ...  |  ...  | ...  |POLYGON(...) |
@@ -141,7 +141,7 @@ The data required are:
 - the GEOGRID of the CityScope table (can be created using [CityScopeJS](https://cityscope.media.mit.edu/CS_cityscopeJS/))
 - the simulated population (can be created from an O-D matrix using OpenCity as outlined above)
 
-## Usage
+### Usage
 import CS_Indicators as CS
 from brix import Indicator, Handler
 import geopandas as gpd
