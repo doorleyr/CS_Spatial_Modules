@@ -79,6 +79,7 @@ def get_central_nodes(geodf, G):
 class Proximity_Indicator(Indicator):
     def setup(self, zones, geogrid, buffer=1200):
         print('Setting up Proximity Indicator')
+        self.name='Proximity'
         self.zone_to_node_tolerance=500
         self.grid_to_node_tolerance=100
         self.naics_codes=[col for col in zones.columns if 'naics' in col]
@@ -332,6 +333,7 @@ class Proximity_Indicator(Indicator):
 
 class Density_Indicator(Indicator):
     def setup(self, zones):
+        self.name='Density'
         self.zones=zones
         self.overlapping_geoids=list(zones.loc[zones['sim_area']].index)
         self.grid_cell_area=None
@@ -521,6 +523,7 @@ def mode_choice_model(all_trips_df):
 class Mobility_indicator(Indicator):
     def setup(self, zones, geogrid, table_name, simpop_df, external_hw_tags=["motorway","motorway_link","trunk","trunk_link"]):
         self.N_max=250
+        self.name='Mobility'
         self.geogrid=geogrid
         self.external_hw_tags=external_hw_tags
         self.zones=zones
